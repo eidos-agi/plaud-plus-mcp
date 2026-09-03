@@ -4,7 +4,16 @@ from pathlib import Path
 
 import pytest
 
-from plaud_plus_mcp.learn import remember, record_tool, snapshot_filings, snapshot_folders, status, suggest
+from plaud_plus_mcp.learn import (
+    cross_validate,
+    fit,
+    remember,
+    record_tool,
+    snapshot_filings,
+    snapshot_folders,
+    status,
+    suggest,
+)
 
 
 def test_remember_and_suggest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -158,3 +167,54 @@ def test_summary_body_beats_clock_and_blank_title(tmp_path: Path, monkeypatch: p
     assert clock["folders"] == [] or clock["folders"][0]["folder_id"] != "fid-gmw"
     birthday = suggest(title="Coordination: P-Paw's 70th Birthday", path=ledger)
     assert birthday["folders"][0]["folder_id"] == "fid-personal"
+
+
+def test_lift_model_learns_without_hand_aliases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ledger = tmp_path / "learn.jsonl"
+    monkeypatch.setenv("PLAUD_PLUS_LEARN", str(ledger))
+    snapshot_folders(
+        [
+            {"id": "fid-aic", "name": "AIC Holdings"},
+            {"id": "fid-arp", "name": "ARP Anthracite Realty"},
+        ],
+        path=ledger,
+    )
+    snapshot_filings(
+        [
+            {"id": "a1", "folder_id": "fid-aic", "title": "Paseo Engine High Availability and Failover"},
+            {"id": "a2", "folder_id": "fid-aic", "title": "Prim board workers and plod cards"},
+            {"id": "a3", "folder_id": "fid-aic", "title": "Palmwood AI budget for the team"},
+            {
+                "id": "r1",
+                "folder_id": "fid-arp",
+                "title": "Construction pay application G702 retainage",
+                "body": "Clayton walked a GC pay app against the contract. Lender draw next.",
+            },
+            {
+                "id": "r2",
+                "folder_id": "fid-arp",
+                "title": "Lender draw process with G703",
+                "body": "Pay application retainage and lien waiver checks.",
+            },
+            {
+                "id": "r3",
+                "folder_id": "fid-arp",
+                "title": "Excel plugin for pay apps",
+                "body": "Claude Excel plugin generating G702 forms.",
+            },
+        ],
+        path=ledger,
+    )
+    model = fit(ledger)
+    aic_terms = set((model["folders"]["fid-aic"]["terms"] or {}))
+    arp_terms = set((model["folders"]["fid-arp"]["terms"] or {}))
+    assert "paseo" in aic_terms or "prim" in aic_terms
+    assert any("pay" in t or "g702" in t or "retainage" in t for t in arp_terms)
+    paseo = suggest(title="Paseo failover monitoring", path=ledger)
+    assert paseo["do_not_apply"] is True
+    assert paseo["folders"][0]["folder_id"] == "fid-aic"
+    pay = suggest(title="G702 retainage on a pay application", path=ledger)
+    assert pay["folders"][0]["folder_id"] == "fid-arp"
+    cv = cross_validate(ledger)
+    assert cv["n"] == 6
+    assert cv["wrong"] <= 2

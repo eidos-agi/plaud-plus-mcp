@@ -108,10 +108,11 @@ plaud-plus learn remember --claim "Haul reviews go in GMW Greenmark"
 plaud-plus learn
 ```
 
-`snapshot` records folder names and already-filed titles. Clock titles
-(`2026-08-25 10:00:43`) return no folder guess unless a summary is passed.
-`suggest --recording-id` reads the Plaud summary. `do_not_apply: true` always.
-Ask the human, then call `mutate_recording`.
+`snapshot` records folder names, already-filed titles, and their summaries,
+then fits a lift/n-gram model (`learn.model.json`). Clock titles return no
+guess unless a summary is passed. `suggest --recording-id` reads the Plaud
+summary. `learn cv` is leave-one-out accuracy. `learn rank` scores unfiled
+titles. `do_not_apply: true` always. Ask the human, then `mutate_recording`.
 
 ## License
 

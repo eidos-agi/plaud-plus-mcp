@@ -9,7 +9,17 @@ import sys
 
 from . import __version__
 from .auth import AuthError, desktop_available, ensure_session, keyring_get, seed_wrt_from_desktop
-from .learn import recall, remember, snapshot_filings, snapshot_folders, status, suggest
+from .learn import (
+    cross_validate,
+    fit,
+    rank,
+    recall,
+    remember,
+    snapshot_filings,
+    snapshot_folders,
+    status,
+    suggest,
+)
 
 
 def _print_json(value: object) -> None:
@@ -54,6 +64,50 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
     return ping.returncode
 
 
+def _client():
+    from plaud_tools.core.client import PlaudClient
+    from plaud_tools.core.session import SessionManager, SessionStore
+
+    return PlaudClient(SessionManager(SessionStore()))
+
+
+def _filed_docs_with_summaries() -> tuple[list[dict], list[dict]]:
+    from plaud_tools.core.client import PlaudRecordingQuery
+
+    client = _client()
+    folders = [{"id": t.id, "name": t.name, "color": t.color} for t in client.list_file_tags()]
+    recs = []
+    skip = 0
+    while True:
+        batch = client.list_recordings(
+            PlaudRecordingQuery(skip=skip, limit=200, is_trash=0, sort_by="start_time", is_desc=True)
+        )
+        if not batch:
+            break
+        recs.extend(batch)
+        if len(batch) < 200:
+            break
+        skip += 200
+    filed = [r for r in recs if r.filetag_id_list]
+    docs = []
+    for i, r in enumerate(filed, 1):
+        print(f"plaud-plus: summary {i}/{len(filed)} {r.filename[:60]}", file=sys.stderr)
+        detail = client.get_recording(r.id, include_summary=True)
+        extra = detail.extra_data or {}
+        headline = (extra.get("aiContentHeader") or {}).get("headline")
+        body = detail.ai_content if isinstance(detail.ai_content, str) else None
+        docs.append(
+            {
+                "id": r.id,
+                "folder_id": r.filetag_id_list[0],
+                "title": r.filename,
+                "headline": headline,
+                "body": body,
+            }
+        )
+    return folders, docs
+
+
 def cmd_learn(args: argparse.Namespace) -> int:
     action = args.action or "status"
     if action == "status":
@@ -74,30 +128,61 @@ def cmd_learn(args: argparse.Namespace) -> int:
         except AuthError as exc:
             print(f"plaud-plus: {exc}", file=sys.stderr)
             return 2
-        listed = subprocess.run(["plaud-tools", "folders"], capture_output=True, text=True)
+        folders, docs = _filed_docs_with_summaries()
+        n_folders = snapshot_folders(folders)
+        n_filed = snapshot_filings(docs)
+        model = fit()
+        _print_json(
+            {
+                "ok": True,
+                "ingested_folders": n_folders,
+                "ingested_filings": n_filed,
+                "model": {"n_docs": model.get("n_docs"), "folders": {v.get("name"): v.get("n") for v in (model.get("folders") or {}).values()}},
+                **status(),
+            }
+        )
+        return 0
+    if action == "fit":
+        model = fit()
+        _print_json(
+            {
+                "ok": True,
+                "n_docs": model.get("n_docs"),
+                "folders": {
+                    (info.get("name") or fid): {
+                        "n": info.get("n"),
+                        "top": list((info.get("terms") or {}).keys())[:12],
+                    }
+                    for fid, info in (model.get("folders") or {}).items()
+                },
+                "confidence": "UNVERIFIED",
+                "do_not_apply": True,
+            }
+        )
+        return 0
+    if action == "cv":
+        _print_json(cross_validate())
+        return 0
+    if action == "rank":
+        try:
+            ensure_session()
+        except AuthError as exc:
+            print(f"plaud-plus: {exc}", file=sys.stderr)
+            return 2
+        listed = subprocess.run(
+            ["plaud-tools", "list", "--unfiled", "--limit", "200"],
+            capture_output=True,
+            text=True,
+        )
         if listed.returncode != 0:
             print(listed.stderr or listed.stdout, file=sys.stderr)
             return listed.returncode
         try:
-            folders = json.loads(listed.stdout)
+            recs = json.loads(listed.stdout)
         except json.JSONDecodeError:
-            print("plaud-plus: folders was not JSON", file=sys.stderr)
+            print("plaud-plus: list was not JSON", file=sys.stderr)
             return 2
-        n_folders = snapshot_folders(folders if isinstance(folders, list) else [])
-        listed_recs = subprocess.run(
-            ["plaud-tools", "list", "--limit", "500"],
-            capture_output=True,
-            text=True,
-        )
-        n_filed = 0
-        if listed_recs.returncode == 0:
-            try:
-                recs = json.loads(listed_recs.stdout)
-            except json.JSONDecodeError:
-                recs = []
-            if isinstance(recs, list):
-                n_filed = snapshot_filings(recs)
-        _print_json({"ok": True, "ingested_folders": n_folders, "ingested_filings": n_filed, **status()})
+        _print_json(rank(recs if isinstance(recs, list) else []))
         return 0
     if action == "suggest":
         title = args.title
@@ -170,7 +255,7 @@ def main(argv: list[str] | None = None) -> int:
             "action",
             nargs="?",
             default="status",
-            choices=["status", "recall", "suggest", "remember", "snapshot"],
+            choices=["status", "recall", "suggest", "remember", "snapshot", "fit", "cv", "rank"],
         )
         learn.add_argument("--title")
         learn.add_argument("--recording-id")

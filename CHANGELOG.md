@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0 — 2026-09-03
+
+- Self-fitting lift/n-gram filing model (`plaud-plus learn fit` / `cv` / `rank`).
+- `snapshot` pulls summaries of already-filed recordings and refits.
+- Suggestions include `why` terms. Still UNVERIFIED, still never auto-applied.
+
 ## 0.2.2 — 2026-09-03
 
 - `suggest` reads the Plaud summary when given a `recording_id`.

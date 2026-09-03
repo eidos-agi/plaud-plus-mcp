@@ -37,9 +37,10 @@ plaud-plus doctor
 | `process_recording` | `wait=` none / transcript / summary. |
 | `merge_recordings` | Two+ ids + `title`. Sources stay. |
 | `delete_recording` | Permanent. `confirm=true` only after the human says yes. Prefer trash. |
-| `plaud_plus_learn` | Facade: `status` / `snapshot` / `recall` / `suggest` / `remember`. UNVERIFIED. Never apply a suggestion without asking. |
+| `plaud_plus_learn` | Facade: `status` / `snapshot` / `fit` / `cv` / `suggest` / `remember`. UNVERIFIED. Never apply a suggestion without asking. |
 
-Before filing a recording, call `plaud_plus_learn(action="suggest", title=...)`.
+Before filing, `plaud_plus_learn(action="suggest", title=..., recording_id=...)`.
+The scorer is a lift/n-gram model fitted from already-filed titles+summaries.
 If a folder guess looks right, **ask the human**, then `mutate_recording(action="move")`.
 
 ## Failure modes

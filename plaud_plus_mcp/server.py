@@ -19,13 +19,23 @@ from plaud_tools.mcp_pt.server import _TOOLS
 
 from . import __version__
 from .auth import AuthError, ensure_session
-from .learn import recall, record_tool, remember, snapshot_filings, snapshot_folders, status, suggest
+from .learn import (
+    cross_validate,
+    fit,
+    recall,
+    record_tool,
+    remember,
+    snapshot_filings,
+    snapshot_folders,
+    status,
+    suggest,
+)
 
 LEARN_TOOL = types.Tool(
     name="plaud_plus_learn",
     description=(
         "Local observations from this machine's Plaud Plus writes. "
-        "action=status|recall|suggest|remember|snapshot. Suggestions are UNVERIFIED; "
+        "action=status|recall|suggest|remember|snapshot|fit|cv. Suggestions are UNVERIFIED; "
         "never apply them without asking the human. Not lessons.md CONFIRMED."
     ),
     input_schema={
@@ -33,7 +43,7 @@ LEARN_TOOL = types.Tool(
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["status", "recall", "suggest", "remember", "snapshot"],
+                "enum": ["status", "recall", "suggest", "remember", "snapshot", "fit", "cv"],
             },
             "title": {"type": "string", "description": "For suggest: recording title"},
             "recording_id": {"type": "string", "description": "For suggest"},
@@ -129,7 +139,25 @@ def _learn_handler(get_client: Any, get_folders: Any) -> Any:
                         if len(batch) < page:
                             break
                         skip += page
-                    n_filed = snapshot_filings(recs)
+                    docs: list[dict[str, Any]] = []
+                    for rec in recs:
+                        if not rec.get("folder_id"):
+                            continue
+                        detail = client.get_recording(rec["id"], include_summary=True)
+                        extra = getattr(detail, "extra_data", None) or {}
+                        headline = (extra.get("aiContentHeader") or {}).get("headline")
+                        body = detail.ai_content if isinstance(getattr(detail, "ai_content", None), str) else None
+                        docs.append(
+                            {
+                                "id": rec["id"],
+                                "folder_id": rec["folder_id"],
+                                "title": rec.get("title"),
+                                "headline": headline,
+                                "body": body,
+                            }
+                        )
+                    n_filed = snapshot_filings(docs)
+                    fit()
             except Exception as exc:
                 return _json_tool(
                     {"error": f"snapshot failed: {exc}", "error_code": "api_error", "retryable": True},
@@ -138,6 +166,11 @@ def _learn_handler(get_client: Any, get_folders: Any) -> Any:
             return _json_tool(
                 {"ok": True, "ingested": n_folders + n_filed, "ingested_folders": n_folders, "ingested_filings": n_filed, **status()}
             )
+        if action == "fit":
+            model = fit()
+            return _json_tool({"ok": True, "n_docs": model.get("n_docs"), "do_not_apply": True, **status()})
+        if action == "cv":
+            return _json_tool(cross_validate())
         if action == "suggest":
             hint_title = title
             body = None
