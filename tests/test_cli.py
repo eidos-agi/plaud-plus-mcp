@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from plaud_plus_mcp.cli import main
@@ -20,3 +22,13 @@ def test_passthrough_to_plaud_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     assert main(["folders"]) == 0
     assert called == [["plaud-tools", "folders"]]
+
+
+def test_learn_status_json(tmp_path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setenv("PLAUD_PLUS_LEARN", str(tmp_path / "learn.jsonl"))
+    assert main(["learn", "status"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["ok"] is True
+    assert out["events"] == 0
+    assert out["confidence"] == "UNVERIFIED"
+    assert "illegal here" in out["note"]

@@ -8,3 +8,4 @@ Write-capable Plaud MCP for agents. Official `@plaud-ai/mcp` is read-only.
 - Tools live in dependency `plaud-tools`. This repo owns session bootstrap.
 - Never print tokens. Never commit `encryption.json` or keychain dumps.
 - Tests: `uv run pytest` (offline). Live doctor: `plaud-plus doctor`.
+- Learn ledger is local UNVERIFIED observations, not lessons.md CONFIRMED.

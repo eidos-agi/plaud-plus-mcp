@@ -10,7 +10,12 @@ using the private web API. You still need a real Plaud account.
 
 The eleven tools come from [plaud-tools](https://github.com/massive-value/plaud-tools)
 (LGPL-3.0-or-later). This package adds session bootstrap that actually works
-for Google-SSO / Plaud Desktop users, whose workspace tokens last ~24 hours.
+for Google-SSO / Plaud Desktop users, whose workspace tokens last ~24 hours,
+and a **learn facade** that remembers writes on this machine.
+
+Observations are UNVERIFIED. They are not [lessons.md](https://github.com/eidos-agi/lessons.md)
+CONFIRMED lessons. The MCP will not file a recording because a title said “ARP”;
+it will *suggest* and wait.
 
 ## Install
 
@@ -89,6 +94,21 @@ fresh workspace token is usable.
 
 CLI passthrough: `plaud-plus folders`, `plaud-plus list --limit 5`, and the
 rest of the plaud-tools commands work after a session exists.
+
+## Learn (local, unverified)
+
+One extra MCP tool: `plaud_plus_learn`. Actions: `status`, `snapshot`, `recall`,
+`suggest`, `remember`. Successful `mutate_*` / `edit_*` / `upload_*` calls append
+to a JSONL ledger (`~/Library/Application Support/PlaudPlus/learn.jsonl` on macOS).
+
+```bash
+plaud-plus learn snapshot
+plaud-plus learn suggest --title "ARP site walk with Clayton"
+plaud-plus learn remember --claim "Haul reviews go in GMW Greenmark"
+plaud-plus learn
+```
+
+`suggest` sets `do_not_apply: true`. Ask the human, then call `mutate_recording`.
 
 ## License
 

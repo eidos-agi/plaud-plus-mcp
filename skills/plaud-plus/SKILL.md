@@ -5,7 +5,8 @@ description: >
   Use for rename, folders, speakers, transcript/summary edits, upload, merge,
   trash. Tools: browse_recordings, get_recording, mutate_recording,
   edit_transcript, edit_summary, upload_recording, process_recording,
-  merge_recordings, list_folders, mutate_folder, delete_recording.
+  merge_recordings, list_folders, mutate_folder, delete_recording,
+  plaud_plus_learn.
 ---
 
 # plaud-plus
@@ -36,6 +37,10 @@ plaud-plus doctor
 | `process_recording` | `wait=` none / transcript / summary. |
 | `merge_recordings` | Two+ ids + `title`. Sources stay. |
 | `delete_recording` | Permanent. `confirm=true` only after the human says yes. Prefer trash. |
+| `plaud_plus_learn` | Facade: `status` / `snapshot` / `recall` / `suggest` / `remember`. UNVERIFIED. Never apply a suggestion without asking. |
+
+Before filing a recording, call `plaud_plus_learn(action="suggest", title=...)`.
+If a folder guess looks right, **ask the human**, then `mutate_recording(action="move")`.
 
 ## Failure modes
 
