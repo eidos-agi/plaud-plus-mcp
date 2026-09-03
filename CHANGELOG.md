@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0 — 2026-09-03
+
+- Filing score is people, place, and time-of-day first. A name is not a folder:
+  Clayton in a G702 walk is ARP; Clayton on a dashboard is AIC.
+- Product-noun "build vs ops" is a tie-break only when those are missing.
+- `suggest` takes the recording hour from Plaud `start_time`.
+
 ## 0.3.1 — 2026-09-03
 
 - Hard rule: building software → AIC Holdings; tenant ops (G702 / retainage / DD5 /

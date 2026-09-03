@@ -188,6 +188,183 @@ def _term_in(term: str, text: str) -> bool:
     return re.search(rf"(?<![a-z0-9]){re.escape(needle)}(?![a-z0-9])", text) is not None
 
 
+PERSON_STOP = {
+    "the",
+    "this",
+    "that",
+    "your",
+    "core",
+    "action",
+    "meeting",
+    "insert",
+    "speaker",
+    "next",
+    "key",
+    "new",
+    "general",
+    "initial",
+    "problem",
+    "date",
+    "location",
+    "participants",
+    "overview",
+    "background",
+    "reminder",
+    "idea",
+    "demo",
+    "briefing",
+    "note",
+    "weekly",
+    "casual",
+    "customer",
+    "pilot",
+    "using",
+    "index",
+    "draft",
+    "showing",
+    "microsoft",
+    "apple",
+    "claude",
+    "anthracite",
+    "universal",
+    "atlas",
+    "central",
+    "reporting",
+    "automated",
+    "daniel",
+    "shanklin",
+    "plaud",
+    "excel",
+    "sidebar",
+    "setup",
+    "tactical",
+    "accelerated",
+    "holdings",
+    "integration",
+    "whatever",
+    "remind",
+    "research",
+    "things",
+    "remember",
+    "their",
+    "they",
+    "hours",
+    "title",
+    "coordinating",
+    "synopsis",
+    "august",
+    "outlook",
+    "double",
+    "prepare",
+    "unassigned",
+    "plans",
+    "branch",
+    "algorithm",
+    "stocks",
+    "imported",
+    "recording",
+    "single",
+    "primary",
+    "current",
+    "data",
+    "topic",
+    "description",
+    "each",
+    "cards",
+    "reliability",
+    "define",
+    "proposed",
+    "ensure",
+    "communicate",
+    "identify",
+    "approval",
+    "suggestions",
+    "planning",
+    "presentation",
+    "another",
+    "send",
+    "add",
+    "set",
+    "bird",
+    "notes",
+    "device",
+    "workaround",
+    "capturing",
+    "audio",
+    "plot",
+    "system",
+    "ingestion",
+    "core",
+}
+ORG_TAIL = {
+    "partners",
+    "holdings",
+    "realty",
+    "system",
+    "dashboard",
+    "meeting",
+    "notes",
+    "plugin",
+    "workflow",
+    "process",
+    "allocation",
+    "integration",
+    "development",
+    "engine",
+    "city",
+    "street",
+    "park",
+    "national",
+}
+NAME2 = re.compile(r"\b([A-Z][a-z]+)\s+([A-Z][a-z]+)\b")
+POSSESSIVE = re.compile(r"\b([A-Z][A-Za-z\-]+)'s\b")
+FOR_TO_WITH = re.compile(r"\b(?:to|for|with)\s+([A-Z][a-z]{2,})\b")
+PLACE_RE = re.compile(
+    r"\b(home|neighborhood|zion(?:\s+national\s+park)?|vegas|"
+    r"st\.?\s*george|texas|crested butte|fort worth|denton|host stand)\b",
+    re.I,
+)
+
+
+def extract_people(text: str | None) -> set[str]:
+    """People names from title/summary. Not folder IDs — context comes later."""
+    if not text:
+        return set()
+    found: set[str] = set()
+    for first, last in NAME2.findall(text):
+        if first.lower() in PERSON_STOP or last.lower() in PERSON_STOP or last.lower() in ORG_TAIL:
+            continue
+        found.add(f"{first.lower()} {last.lower()}")
+        found.add(first.lower())
+    for match in POSSESSIVE.finditer(text):
+        token = match.group(1).lower()
+        if token not in PERSON_STOP and len(token) >= 3:
+            found.add(token)
+    for match in FOR_TO_WITH.finditer(text):
+        token = match.group(1).lower()
+        if token not in PERSON_STOP and token not in ORG_TAIL:
+            found.add(token)
+    for chunk in re.findall(
+        r"\b[A-Z][a-z]{2,}(?:,\s+[A-Z][a-z]{2,})+,\s+and\s+[A-Z][a-z]{2,}\b",
+        text,
+    ):
+        for part in re.findall(r"[A-Z][a-z]{2,}", chunk):
+            if part.lower() not in PERSON_STOP and part.lower() not in ORG_TAIL:
+                found.add(part.lower())
+    return found
+
+
+def extract_places(text: str | None) -> set[str]:
+    if not text:
+        return set()
+    out: set[str] = set()
+    for match in PLACE_RE.finditer(text):
+        loc = re.sub(r"\s+", " ", match.group(0).lower())
+        loc = loc.replace("st. george", "st george")
+        out.add(loc)
+    return out
+
+
 def _is_test_folder(name: str | None) -> bool:
     n = (name or "").lower()
     return "probe" in n or "test folder" in n
@@ -335,6 +512,7 @@ def snapshot_filings(recordings: list[dict[str, Any]], path: Path | None = None)
         title = rec.get("title") or rec.get("filename") or rec.get("new_name")
         headline = rec.get("headline")
         body = rec.get("body") or rec.get("summary")
+        hour = rec.get("hour")
         if isinstance(body, str) and len(body) > 2000:
             body = body[:2000]
         if not fid or not rid:
@@ -352,23 +530,25 @@ def snapshot_filings(recordings: list[dict[str, Any]], path: Path | None = None)
                 event["headline"] = headline
             if body:
                 event["body"] = body
+            if isinstance(hour, int):
+                event["hour"] = hour
             append(event, path=path)
             seen.add(key)
             if body:
                 have_body.add(rid)
             n += 1
         elif body and rid not in have_body:
-            append(
-                {
-                    "kind": "doc",
-                    "recording_id": rid,
-                    "folder_id": fid,
-                    "title": title,
-                    "headline": headline,
-                    "body": body,
-                },
-                path=path,
-            )
+            doc = {
+                "kind": "doc",
+                "recording_id": rid,
+                "folder_id": fid,
+                "title": title,
+                "headline": headline,
+                "body": body,
+            }
+            if isinstance(hour, int):
+                doc["hour"] = hour
+            append(doc, path=path)
             have_body.add(rid)
             n += 1
     return n
@@ -447,6 +627,7 @@ def _labeled_docs(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "title": e.get("title") or prev.get("title"),
             "headline": e.get("headline") or prev.get("headline"),
             "body": e.get("body") or prev.get("body"),
+            "hour": e.get("hour") if e.get("hour") is not None else prev.get("hour"),
         }
     return list(by_id.values())
 
@@ -508,12 +689,28 @@ def fit(path: Path | None = None, *, persist: bool = True) -> dict[str, Any]:
         top = dict(sorted(terms.items(), key=lambda kv: -kv[1]["weight"])[:48])
         folders[fid] = {"name": names.get(fid), "n": int(folder_n[fid]), "terms": top}
 
+    people_idx: dict[str, dict[str, int]] = defaultdict(Counter)
+    places_idx: dict[str, dict[str, int]] = defaultdict(Counter)
+    hours_idx: dict[str, dict[str, int]] = defaultdict(Counter)
+    for doc in docs:
+        fid = str(doc["folder_id"])
+        text = _doc_text(doc)
+        for person in extract_people(text):
+            people_idx[person][fid] += 1
+        for place in extract_places(text):
+            places_idx[place][fid] += 1
+        if isinstance(doc.get("hour"), int) and 0 <= int(doc["hour"]) <= 23:
+            hours_idx[fid][str(int(doc["hour"]))] += 1
+
     model = {
-        "version": 1,
-        "algo": "lift-ngrams",
+        "version": 2,
+        "algo": "people-place-time+lift",
         "fitted_at": int(time.time()),
         "n_docs": n_docs,
         "folders": folders,
+        "people": {p: dict(c) for p, c in people_idx.items()},
+        "places": {p: dict(c) for p, c in places_idx.items()},
+        "hours": {fid: dict(c) for fid, c in hours_idx.items()},
         "confidence": "UNVERIFIED",
     }
     if persist:
@@ -648,6 +845,107 @@ def _apply_hard_rule(
     return sorted(by_id.values(), key=lambda r: -float(r["score"]))[:5]
 
 
+def _unique_folder(dist: dict[str, Any]) -> str | None:
+    positive = [fid for fid, n in dist.items() if int(n or 0) > 0]
+    return positive[0] if len(positive) == 1 else None
+
+
+def hour_from_recording(rec: dict[str, Any] | None) -> int | None:
+    if not rec:
+        return None
+    if isinstance(rec.get("hour"), int) and 0 <= rec["hour"] <= 23:
+        return rec["hour"]
+    date = rec.get("date")
+    if isinstance(date, str) and "T" in date:
+        try:
+            return int(date.split("T", 1)[1][:2])
+        except ValueError:
+            return None
+    return None
+
+
+def _score_people_place_time(
+    model: dict[str, Any],
+    title: str | None,
+    body: str | None,
+    hour: int | None,
+    names: dict[str, str],
+) -> dict[str, dict[str, Any]]:
+    """Names, places, time-of-day. A person is not a folder — context is."""
+    blob = f"{title or ''}\n{body or ''}"
+    blob_l = blob.lower()
+    scores: dict[str, dict[str, Any]] = defaultdict(lambda: {"score": 0.0, "why": []})
+    people_map = model.get("people") or {}
+    for person in extract_people(blob):
+        dist = people_map.get(person) or {}
+        if not dist and " " in person:
+            dist = people_map.get(person.split()[0]) or {}
+        if not dist:
+            # unlabeled but family/home names in title still lean Personal
+            personal = _folder_id_for(names, "personal")
+            if personal and person in {"p-paw", "wyatt", "colleen", "angela", "sid", "jacob", "slate"}:
+                scores[personal]["score"] += 12
+                scores[personal]["why"].append({"term": person, "where": "person", "weight": 12})
+            continue
+        uniq = _unique_folder(dist)
+        if uniq:
+            scores[uniq]["score"] += 12
+            scores[uniq]["why"].append({"term": person, "where": "person", "weight": 12})
+            continue
+        arp = _folder_id_for(names, "arp", "anthracite")
+        aic = _folder_id_for(names, "aic")
+        if arp and any(_term_in(m, blob_l) for m in ARP_OPS_STRONG):
+            scores[arp]["score"] += 10
+            scores[arp]["why"].append({"term": f"{person}+ops", "where": "person_context", "weight": 10})
+        elif aic:
+            scores[aic]["score"] += 6
+            scores[aic]["why"].append({"term": f"{person}+work", "where": "person_context", "weight": 6})
+        else:
+            for fid, n in dist.items():
+                scores[fid]["score"] += 3
+                scores[fid]["why"].append({"term": person, "where": "person_shared", "weight": 3})
+    places_map = model.get("places") or {}
+    personal = _folder_id_for(names, "personal")
+    homeish = {
+        "home",
+        "neighborhood",
+        "zion",
+        "vegas",
+        "st george",
+        "texas",
+        "zion national park",
+        "crested butte",
+    }
+    for place in extract_places(blob):
+        dist = places_map.get(place) or {}
+        uniq = _unique_folder(dist)
+        if uniq:
+            scores[uniq]["score"] += 10
+            scores[uniq]["why"].append({"term": place, "where": "place", "weight": 10})
+        elif personal and place in homeish:
+            scores[personal]["score"] += 10
+            scores[personal]["why"].append({"term": place, "where": "place", "weight": 10})
+    if isinstance(hour, int) and 0 <= hour <= 23:
+        hours = model.get("hours") or {}
+        best_fid, best_n, total = None, 0, 0
+        for fid, hist in hours.items():
+            n = int(hist.get(str(hour), 0) or 0)
+            total += n
+            if n > best_n:
+                best_fid, best_n = fid, n
+        if best_fid and best_n >= 2 and total and best_n / total >= 0.5:
+            scores[best_fid]["score"] += 3
+            scores[best_fid]["why"].append({"term": f"hour:{hour:02d}", "where": "time", "weight": 3})
+        title_l = (title or "").lower()
+        if personal and (hour >= 18 or hour < 6) and "meeting:" not in title_l:
+            if any(w in title_l for w in ("casual", "home", "reminder", "birthday", "neighborhood", "idea")):
+                scores[personal]["score"] += 6
+                scores[personal]["why"].append(
+                    {"term": f"hour:{hour:02d}+offhours", "where": "time", "weight": 6}
+                )
+    return scores
+
+
 def _alias_hits(events: list[dict[str, Any]], blob_text: str) -> Counter[str]:
     scores: Counter[str] = Counter()
     for e in events:
@@ -713,6 +1011,7 @@ def suggest(
     title: str | None = None,
     body: str | None = None,
     recording_id: str | None = None,
+    hour: int | None = None,
     path: Path | None = None,
 ) -> dict[str, Any]:
     events = read_events(path)
@@ -746,8 +1045,24 @@ def suggest(
                     "score": float(bonus),
                     "why": [{"term": "alias", "where": "note", "weight": bonus}],
                 }
+        ctx = _score_people_place_time(model, title, body, hour, names)
+        ctx_max = 0.0
+        for fid, hit in ctx.items():
+            ctx_max = max(ctx_max, float(hit["score"]))
+            if fid in by_id:
+                by_id[fid]["score"] = round(float(by_id[fid]["score"]) + float(hit["score"]), 3)
+                by_id[fid].setdefault("why", []).extend(hit["why"])
+            else:
+                by_id[fid] = {
+                    "folder_id": fid,
+                    "name": names.get(fid),
+                    "score": float(hit["score"]),
+                    "why": list(hit["why"]),
+                }
         folder_guess = sorted(by_id.values(), key=lambda r: -float(r["score"]))[:5]
-        folder_guess = _apply_hard_rule(folder_guess, hard_rule_build_vs_ops(title, body, names))
+        # Product-noun rule is a tie-break only. People / place / time win.
+        if ctx_max < 8:
+            folder_guess = _apply_hard_rule(folder_guess, hard_rule_build_vs_ops(title, body, names))
 
     speakers: Counter[tuple[str, str]] = Counter()
     for e in events:
@@ -772,7 +1087,8 @@ def suggest(
         "title": title,
         "confidence": "UNVERIFIED",
         "do_not_apply": True,
-        "algo": "lift-ngrams+build_vs_ops",
+        "algo": "people-place-time+lift",
+        "hour": hour,
         "weak": weak,
         "folders": folder_guess,
         "speakers": speaker_guess,
@@ -808,7 +1124,12 @@ def cross_validate(path: Path | None = None) -> dict[str, Any]:
             tmp = Path(fh.name)
         try:
             fit(tmp, persist=True)
-            guess = suggest(title=held.get("title"), body=held.get("body"), path=tmp)
+            guess = suggest(
+                title=held.get("title"),
+                body=held.get("body"),
+                hour=held.get("hour") if isinstance(held.get("hour"), int) else None,
+                path=tmp,
+            )
         finally:
             tmp.unlink(missing_ok=True)
             tmp.with_name(tmp.stem + ".model.json").unlink(missing_ok=True)
@@ -886,6 +1207,7 @@ def rank(recordings: list[dict[str, Any]], path: Path | None = None) -> dict[str
             title=title,
             body=rec.get("body") or rec.get("summary"),
             recording_id=rec.get("id") or rec.get("recording_id"),
+            hour=hour_from_recording(rec),
             path=path,
         )
         top = guess["folders"][0] if guess["folders"] else None

@@ -12,6 +12,7 @@ from .auth import AuthError, desktop_available, ensure_session, keyring_get, see
 from .learn import (
     cross_validate,
     fit,
+    hour_from_recording,
     rank,
     recall,
     remember,
@@ -96,6 +97,13 @@ def _filed_docs_with_summaries() -> tuple[list[dict], list[dict]]:
         extra = detail.extra_data or {}
         headline = (extra.get("aiContentHeader") or {}).get("headline")
         body = detail.ai_content if isinstance(detail.ai_content, str) else None
+        from datetime import datetime as _dt
+
+        hour = None
+        try:
+            hour = _dt.fromtimestamp(r.start_time / 1000).hour
+        except Exception:
+            hour = None
         docs.append(
             {
                 "id": r.id,
@@ -103,6 +111,7 @@ def _filed_docs_with_summaries() -> tuple[list[dict], list[dict]]:
                 "title": r.filename,
                 "headline": headline,
                 "body": body,
+                "hour": hour,
             }
         )
     return folders, docs
@@ -187,6 +196,7 @@ def cmd_learn(args: argparse.Namespace) -> int:
     if action == "suggest":
         title = args.title
         body = None
+        hour = None
         rid = args.recording_id
         if rid:
             try:
@@ -207,20 +217,21 @@ def cmd_learn(args: argparse.Namespace) -> int:
                 raw = payload.get("summary") if isinstance(payload, dict) else None
                 if isinstance(raw, str) and raw.strip():
                     body = raw
-            if not title:
-                shown = subprocess.run(
-                    ["plaud-tools", "show", rid],
-                    capture_output=True,
-                    text=True,
-                )
-                if shown.returncode == 0:
-                    try:
-                        payload = json.loads(shown.stdout)
-                    except json.JSONDecodeError:
-                        payload = {}
-                    if isinstance(payload, dict):
+            shown = subprocess.run(
+                ["plaud-tools", "show", rid],
+                capture_output=True,
+                text=True,
+            )
+            if shown.returncode == 0:
+                try:
+                    payload = json.loads(shown.stdout)
+                except json.JSONDecodeError:
+                    payload = {}
+                if isinstance(payload, dict):
+                    if not title:
                         title = payload.get("title") or payload.get("filename") or title
-        _print_json(suggest(title=title, body=body, recording_id=rid))
+                    hour = hour_from_recording(payload)
+        _print_json(suggest(title=title, body=body, recording_id=rid, hour=hour))
         return 0
     print(f"plaud-plus: unknown learn action {action}", file=sys.stderr)
     return 2

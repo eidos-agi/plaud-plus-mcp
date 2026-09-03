@@ -147,6 +147,13 @@ def _learn_handler(get_client: Any, get_folders: Any) -> Any:
                         extra = getattr(detail, "extra_data", None) or {}
                         headline = (extra.get("aiContentHeader") or {}).get("headline")
                         body = detail.ai_content if isinstance(getattr(detail, "ai_content", None), str) else None
+                        hour = None
+                        date = rec.get("date")
+                        if isinstance(date, str) and "T" in date:
+                            try:
+                                hour = int(date.split("T", 1)[1][:2])
+                            except ValueError:
+                                hour = None
                         docs.append(
                             {
                                 "id": rec["id"],
@@ -154,6 +161,7 @@ def _learn_handler(get_client: Any, get_folders: Any) -> Any:
                                 "title": rec.get("title"),
                                 "headline": headline,
                                 "body": body,
+                                "hour": hour,
                             }
                         )
                     n_filed = snapshot_filings(docs)
@@ -174,6 +182,7 @@ def _learn_handler(get_client: Any, get_folders: Any) -> Any:
         if action == "suggest":
             hint_title = title
             body = None
+            hour = None
             if recording_id:
                 client = get_client()
                 if client is not None:
@@ -183,9 +192,15 @@ def _learn_handler(get_client: Any, get_folders: Any) -> Any:
                         content = getattr(detail, "ai_content", None)
                         if isinstance(content, str) and content.strip():
                             body = content
+                        start = getattr(detail, "start_time", None)
+                        if isinstance(start, (int, float)) and start > 0:
+                            from datetime import datetime as _dt
+
+                            ts = start / 1000 if start > 10_000_000_000 else start
+                            hour = _dt.fromtimestamp(ts).hour
                     except Exception:
                         pass
-            return _json_tool(suggest(title=hint_title, body=body, recording_id=recording_id))
+            return _json_tool(suggest(title=hint_title, body=body, recording_id=recording_id, hour=hour))
         return _json_tool(
             {"error": f"unknown action {action!r}", "error_code": "validation", "retryable": False},
             is_error=True,

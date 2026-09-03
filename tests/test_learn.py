@@ -6,6 +6,8 @@ import pytest
 
 from plaud_plus_mcp.learn import (
     cross_validate,
+    extract_people,
+    extract_places,
     fit,
     remember,
     record_tool,
@@ -247,3 +249,71 @@ def test_hard_rule_build_vs_ops(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     assert gmw["folders"][0]["folder_id"] == "fid-gmw"
     clock = suggest(title="2026-08-25 10:00:43", path=ledger)
     assert clock["folders"] == []
+
+
+def test_extract_people_and_places() -> None:
+    text = "Clayton Huddleston and Luke Huntley met. P-Paw's party in Texas. Email to Sid."
+    people = extract_people(text)
+    assert "clayton huddleston" in people
+    assert "luke huntley" in people
+    assert "p-paw" in people
+    assert "sid" in people
+    assert "home" in extract_places("Add this to the home checklist in the neighborhood.")
+
+
+def test_people_place_time_outrank_product_nouns(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ledger = tmp_path / "learn.jsonl"
+    monkeypatch.setenv("PLAUD_PLUS_LEARN", str(ledger))
+    snapshot_folders(
+        [
+            {"id": "fid-aic", "name": "AIC Holdings"},
+            {"id": "fid-arp", "name": "ARP Anthracite Realty"},
+            {"id": "fid-personal", "name": "Personal"},
+        ],
+        path=ledger,
+    )
+    snapshot_filings(
+        [
+            {
+                "id": "arp1",
+                "folder_id": "fid-arp",
+                "title": "Pay application walk with Clayton Huddleston",
+                "body": "Clayton Huddleston reviewed retainage and G702.",
+                "hour": 14,
+            },
+            {
+                "id": "aic1",
+                "folder_id": "fid-aic",
+                "title": "Dashboard with Clayton Huddleston",
+                "body": "Clayton Huddleston on the Atlas Five dashboard.",
+                "hour": 13,
+            },
+            {
+                "id": "p1",
+                "folder_id": "fid-personal",
+                "title": "Reminder: Add Item to Home Checklist",
+                "body": "When I get home, make sure it's on my checklist.",
+                "hour": 2,
+            },
+        ],
+        path=ledger,
+    )
+    fit(ledger)
+    paw = suggest(title="08-01 Coordination: P-Paw's 70th Birthday", hour=11, path=ledger)
+    assert paw["folders"][0]["folder_id"] == "fid-personal"
+    clay_ops = suggest(
+        title="Walk the pay app",
+        body="Clayton Huddleston on retainage and G702.",
+        hour=14,
+        path=ledger,
+    )
+    assert clay_ops["folders"][0]["folder_id"] == "fid-arp"
+    clay_work = suggest(
+        title="Dashboard session",
+        body="Clayton Huddleston looking at Atlas Five.",
+        hour=13,
+        path=ledger,
+    )
+    assert clay_work["folders"][0]["folder_id"] == "fid-aic"
+    night = suggest(title="Reminder: Add Item to Home Checklist", hour=2, path=ledger)
+    assert night["folders"][0]["folder_id"] == "fid-personal"
