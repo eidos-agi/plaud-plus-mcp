@@ -59,6 +59,12 @@ SKIP = {
     "reasoning",
     "session",
     "imported",
+    "customer",
+    "consultation",
+    "dashboard",
+    "participants",
+    "speaker",
+    "summary",
 }
 
 
@@ -86,6 +92,16 @@ def is_clock_title(title: str | None) -> bool:
     if not title:
         return False
     return bool(CLOCK_TITLE.match(title.strip()))
+
+
+def _term_in(term: str, text: str) -> bool:
+    """Phrase match. Short tokens need a word boundary so 'sid' ≠ 'sidebar'."""
+    needle = term.lower().strip()
+    if len(needle) < 3:
+        return False
+    if " " in needle or "." in needle or len(needle) >= 6:
+        return needle in text
+    return re.search(rf"(?<![a-z0-9]){re.escape(needle)}(?![a-z0-9])", text) is not None
 
 
 def _is_test_folder(name: str | None) -> bool:
@@ -227,21 +243,22 @@ def snapshot_filings(recordings: list[dict[str, Any]], path: Path | None = None)
         fid = rec.get("folder_id")
         rid = rec.get("id") or rec.get("recording_id")
         title = rec.get("title") or rec.get("filename") or rec.get("new_name")
+        headline = rec.get("headline")
         if not fid or not rid:
             continue
         key = (rid, fid)
         if key in seen:
             continue
-        append(
-            {
-                "kind": "move",
-                "action": "seen",
-                "recording_id": rid,
-                "folder_id": fid,
-                "title": title,
-            },
-            path=path,
-        )
+        event = {
+            "kind": "move",
+            "action": "seen",
+            "recording_id": rid,
+            "folder_id": fid,
+            "title": title,
+        }
+        if headline:
+            event["headline"] = headline
+        append(event, path=path)
         seen.add(key)
         n += 1
     return n
@@ -256,35 +273,40 @@ def _folder_names(events: list[dict[str, Any]]) -> dict[str, str]:
     return names
 
 
-def suggest(*, title: str | None = None, recording_id: str | None = None, path: Path | None = None) -> dict[str, Any]:
+def suggest(
+    *,
+    title: str | None = None,
+    body: str | None = None,
+    recording_id: str | None = None,
+    path: Path | None = None,
+) -> dict[str, Any]:
     events = read_events(path)
     names = _folder_names(events)
     clock = is_clock_title(title)
-    hay = tokens(title)
-    title_l = (title or "").lower()
+    hay_title = tokens(title)
+    blob_text = f"{title or ''}\n{body or ''}".lower()
     folder_scores: Counter[str] = Counter()
-    if not clock:
+    # Bag-of-words on the title only. Summaries are long and leak into the wrong folder.
+    # Alias terms may match title or body (named entities from the summary).
+    if not (clock and not (body or "").strip()):
         for e in events:
             if e.get("kind") == "move" and e.get("folder_id"):
-                blob = tokens(str(e.get("title") or "")) | tokens(names.get(str(e["folder_id"]), ""))
-                if hay and hay & blob:
+                prior = tokens(str(e.get("title") or "")) | tokens(str(e.get("headline") or ""))
+                prior |= tokens(names.get(str(e["folder_id"]), ""))
+                if hay_title and hay_title & prior:
                     folder_scores[str(e["folder_id"])] += 2
             if e.get("kind") == "folder" and e.get("folder_id") and e.get("name"):
                 fname = str(e["name"])
-                if _is_test_folder(fname) and "probe" not in title_l:
+                if _is_test_folder(fname) and "probe" not in blob_text:
                     continue
-                if hay and hay & tokens(fname):
+                if hay_title and hay_title & tokens(fname):
                     folder_scores[str(e["folder_id"])] += 3
             if e.get("kind") == "note":
                 fid = e.get("folder_id")
                 terms = e.get("terms") if isinstance(e.get("terms"), list) else []
-                term_hit = any(
-                    isinstance(term, str) and len(term) >= 3 and term.lower() in title_l for term in terms
-                )
+                term_hit = any(isinstance(term, str) and _term_in(term, blob_text) for term in terms)
                 if term_hit and isinstance(fid, str):
                     folder_scores[fid] += 4
-                elif isinstance(fid, str) and hay and hay & tokens(str(e.get("claim") or "")):
-                    folder_scores[fid] += 2
     speakers: Counter[tuple[str, str]] = Counter()
     for e in events:
         if e.get("kind") == "rename_speaker" and e.get("original_label") and e.get("new_name"):
@@ -296,7 +318,7 @@ def suggest(*, title: str | None = None, recording_id: str | None = None, path: 
 
     folder_guess = []
     for fid, score in folder_scores.most_common(5):
-        if _is_test_folder(names.get(fid)) and "probe" not in title_l:
+        if _is_test_folder(names.get(fid)) and "probe" not in blob_text:
             continue
         folder_guess.append({"folder_id": fid, "name": names.get(fid), "score": score})
     speaker_guess = [
@@ -316,9 +338,10 @@ def suggest(*, title: str | None = None, recording_id: str | None = None, path: 
         "corrections": correct_guess,
         "events": len(events),
         "clock_title": clock,
+        "used_body": bool(body),
         "note": (
             "Clock title — do not guess a tenant from the timestamp."
-            if clock
+            if clock and not tokens(body)
             else "Guesses from local write history. Ask the human before mutate_recording / edit_transcript."
         ),
     }

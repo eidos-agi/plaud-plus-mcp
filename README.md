@@ -109,8 +109,9 @@ plaud-plus learn
 ```
 
 `snapshot` records folder names and already-filed titles. Clock titles
-(`2026-08-25 10:00:43`) return no folder guess. `suggest` sets
-`do_not_apply: true`. Ask the human, then call `mutate_recording`.
+(`2026-08-25 10:00:43`) return no folder guess unless a summary is passed.
+`suggest --recording-id` reads the Plaud summary. `do_not_apply: true` always.
+Ask the human, then call `mutate_recording`.
 
 ## License
 

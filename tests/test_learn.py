@@ -113,3 +113,48 @@ def test_snapshot_filings_and_aliases(tmp_path: Path, monkeypatch: pytest.Monkey
     assert pay["folders"][0]["folder_id"] == "fid-arp"
     gmw = suggest(title="06-18 Meeting: Cerebro Metrics Dashboard", path=ledger)
     assert gmw["folders"][0]["folder_id"] == "fid-gmw"
+
+
+def test_summary_body_beats_clock_and_blank_title(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ledger = tmp_path / "learn.jsonl"
+    monkeypatch.setenv("PLAUD_PLUS_LEARN", str(ledger))
+    snapshot_folders(
+        [
+            {"id": "fid-aic", "name": "AIC Holdings"},
+            {"id": "fid-gmw", "name": "GMW Greenmark"},
+            {"id": "fid-personal", "name": "Personal"},
+        ],
+        path=ledger,
+    )
+    remember(
+        "AIC Hub / Entra / Paseo / Prim product work goes in AIC Holdings.",
+        extra={"folder_id": "fid-aic", "terms": ["aic hub", "entra", "paseo", "prim"]},
+        path=ledger,
+    )
+    remember(
+        "Greenmark production is cerebro.greenmarkwaste.com",
+        extra={"folder_id": "fid-gmw", "terms": ["cerebro.greenmarkwaste.com", "greenmarkwaste", "dd5"]},
+        path=ledger,
+    )
+    remember(
+        "Family / P-Paw / Sid go in Personal.",
+        extra={"folder_id": "fid-personal", "terms": ["p-paw", "sid"]},
+        path=ledger,
+    )
+    sidebar = suggest(
+        title="Sidebar",
+        body="The AIC Hub's Single Sign-On integration is being accelerated via Microsoft Entra.",
+        path=ledger,
+    )
+    assert sidebar["folders"][0]["folder_id"] == "fid-aic"
+    cerebro = suggest(
+        title="Cerebro Metrics Dashboard",
+        body="Confirmation that the production environment is at cerebro.greenmarkwaste.com.",
+        path=ledger,
+    )
+    assert cerebro["folders"][0]["folder_id"] == "fid-gmw"
+    clock = suggest(title="2026-08-25 10:00:43", body="Thank you.", path=ledger)
+    assert clock["clock_title"] is True
+    assert clock["folders"] == [] or clock["folders"][0]["folder_id"] != "fid-gmw"
+    birthday = suggest(title="Coordination: P-Paw's 70th Birthday", path=ledger)
+    assert birthday["folders"][0]["folder_id"] == "fid-personal"

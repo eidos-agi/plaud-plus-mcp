@@ -140,15 +140,19 @@ def _learn_handler(get_client: Any, get_folders: Any) -> Any:
             )
         if action == "suggest":
             hint_title = title
-            if recording_id and not hint_title:
+            body = None
+            if recording_id:
                 client = get_client()
                 if client is not None:
                     try:
-                        detail = client.get_recording(recording_id)
-                        hint_title = getattr(detail, "filename", None) or hint_title
+                        detail = client.get_recording(recording_id, include_summary=True)
+                        hint_title = hint_title or getattr(detail, "filename", None)
+                        content = getattr(detail, "ai_content", None)
+                        if isinstance(content, str) and content.strip():
+                            body = content
                     except Exception:
                         pass
-            return _json_tool(suggest(title=hint_title, recording_id=recording_id))
+            return _json_tool(suggest(title=hint_title, body=body, recording_id=recording_id))
         return _json_tool(
             {"error": f"unknown action {action!r}", "error_code": "validation", "retryable": False},
             is_error=True,

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2 — 2026-09-03
+
+- `suggest` reads the Plaud summary when given a `recording_id`.
+- Alias terms use word boundaries (`sid` does not match `Sidebar`).
+- Title bag-of-words no longer scores the whole summary.
+
 ## 0.2.1 — 2026-09-03
 
 - `learn snapshot` also ingests already-filed titles.

@@ -100,7 +100,42 @@ def cmd_learn(args: argparse.Namespace) -> int:
         _print_json({"ok": True, "ingested_folders": n_folders, "ingested_filings": n_filed, **status()})
         return 0
     if action == "suggest":
-        _print_json(suggest(title=args.title, recording_id=args.recording_id))
+        title = args.title
+        body = None
+        rid = args.recording_id
+        if rid:
+            try:
+                ensure_session()
+            except AuthError as exc:
+                print(f"plaud-plus: {exc}", file=sys.stderr)
+                return 2
+            shown = subprocess.run(
+                ["plaud-tools", "summary", rid],
+                capture_output=True,
+                text=True,
+            )
+            if shown.returncode == 0:
+                try:
+                    payload = json.loads(shown.stdout)
+                except json.JSONDecodeError:
+                    payload = {}
+                raw = payload.get("summary") if isinstance(payload, dict) else None
+                if isinstance(raw, str) and raw.strip():
+                    body = raw
+            if not title:
+                shown = subprocess.run(
+                    ["plaud-tools", "show", rid],
+                    capture_output=True,
+                    text=True,
+                )
+                if shown.returncode == 0:
+                    try:
+                        payload = json.loads(shown.stdout)
+                    except json.JSONDecodeError:
+                        payload = {}
+                    if isinstance(payload, dict):
+                        title = payload.get("title") or payload.get("filename") or title
+        _print_json(suggest(title=title, body=body, recording_id=rid))
         return 0
     print(f"plaud-plus: unknown learn action {action}", file=sys.stderr)
     return 2
