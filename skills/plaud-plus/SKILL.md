@@ -40,7 +40,9 @@ plaud-plus doctor
 | `plaud_plus_learn` | Facade: `status` / `snapshot` / `fit` / `cv` / `suggest` / `remember`. UNVERIFIED. Never apply a suggestion without asking. |
 
 Before filing, `plaud_plus_learn(action="suggest", title=..., recording_id=...)`.
-The scorer is a lift/n-gram model fitted from already-filed titles+summaries.
+The scorer is a lift/n-gram model plus a hard rule: building software
+(Paseo / Prim / AIC Hub) → AIC Holdings; tenant ops (G702, retainage,
+cerebro.greenmarkwaste.com) → the tenant folder.
 If a folder guess looks right, **ask the human**, then `mutate_recording(action="move")`.
 
 ## Failure modes

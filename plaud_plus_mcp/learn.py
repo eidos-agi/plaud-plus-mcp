@@ -534,6 +534,120 @@ def load_model(path: Path | None = None) -> dict[str, Any] | None:
     return obj if isinstance(obj, dict) else None
 
 
+def _folder_id_for(names: dict[str, str], *needles: str) -> str | None:
+    for fid, name in names.items():
+        n = (name or "").lower()
+        if any(needle in n for needle in needles):
+            return fid
+    return None
+
+
+BUILD_MARKERS = (
+    "paseo",
+    "prim",
+    "plod",
+    "aic hub",
+    "entra",
+    "railway",
+    "eidos",
+    "eidosh",
+    "wrike",
+    "canio",
+    "board workers",
+    "spreadsheet process",
+)
+ARP_OPS_STRONG = (
+    "g702",
+    "g703",
+    "retainage",
+    "lien waiver",
+    "lender draw",
+    "draw request",
+)
+GMW_OPS = (
+    "cerebro.greenmarkwaste.com",
+    "greenmarkwaste",
+    "dd5",
+    "cape citadel",
+    "sage gl",
+)
+
+
+def hard_rule_build_vs_ops(title: str | None, body: str | None, names: dict[str, str]) -> dict[str, Any] | None:
+    """Hard rule: building software → AIC; doing tenant ops → tenant folder.
+
+    Not lift. Not optional. Still never auto-applies a move.
+    """
+    blob = f"{title or ''}\n{body or ''}".lower()
+    if not blob.strip():
+        return None
+    aic = _folder_id_for(names, "aic")
+    arp = _folder_id_for(names, "arp", "anthracite")
+    gmw = _folder_id_for(names, "gmw", "greenmark")
+    build = any(_term_in(m, blob) for m in BUILD_MARKERS)
+    arp_ops = any(_term_in(m, blob) for m in ARP_OPS_STRONG)
+    gmw_ops = any(_term_in(m, blob) for m in GMW_OPS)
+    pay_app = _term_in("pay application", blob) or _term_in("pay app", blob)
+    tenant_named = _term_in("anthracite", blob) or _term_in("arp", blob)
+
+    if arp_ops and arp:
+        return {
+            "folder_id": arp,
+            "name": names.get(arp),
+            "reason": "tenant ops (pay app / draw / retainage / G702)",
+        }
+    if gmw_ops and gmw:
+        return {
+            "folder_id": gmw,
+            "name": names.get(gmw),
+            "reason": "Greenmark production / DD5 / Sage / cerebro.greenmarkwaste.com",
+        }
+    if build and aic:
+        return {
+            "folder_id": aic,
+            "name": names.get(aic),
+            "reason": "building software (Paseo / Prim / AIC Hub / railway), not tenant ops",
+        }
+    if tenant_named and aic and not arp_ops:
+        if any(_term_in(m, blob) for m in ("spreadsheet", "dashboard", "railway", "web app")):
+            return {
+                "folder_id": aic,
+                "name": names.get(aic),
+                "reason": "tooling about a tenant is AIC Holdings, not the tenant folder",
+            }
+    if pay_app and not build and arp:
+        return {
+            "folder_id": arp,
+            "name": names.get(arp),
+            "reason": "pay application / draw work without a product-build marker",
+        }
+    return None
+
+
+def _apply_hard_rule(
+    folder_guess: list[dict[str, Any]],
+    rule: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if not rule or not rule.get("folder_id"):
+        return folder_guess
+    fid = rule["folder_id"]
+    by_id = {g["folder_id"]: g for g in folder_guess}
+    why = {"term": "hard_rule", "where": "build_vs_ops", "weight": 50, "reason": rule.get("reason")}
+    if fid in by_id:
+        by_id[fid]["score"] = round(max(float(by_id[fid]["score"]), 50.0) + 50.0, 3)
+        by_id[fid].setdefault("why", []).insert(0, why)
+        by_id[fid]["hard_rule"] = rule.get("reason")
+    else:
+        by_id[fid] = {
+            "folder_id": fid,
+            "name": rule.get("name"),
+            "score": 50.0,
+            "why": [why],
+            "hard_rule": rule.get("reason"),
+        }
+    return sorted(by_id.values(), key=lambda r: -float(r["score"]))[:5]
+
+
 def _alias_hits(events: list[dict[str, Any]], blob_text: str) -> Counter[str]:
     scores: Counter[str] = Counter()
     for e in events:
@@ -633,6 +747,7 @@ def suggest(
                     "why": [{"term": "alias", "where": "note", "weight": bonus}],
                 }
         folder_guess = sorted(by_id.values(), key=lambda r: -float(r["score"]))[:5]
+        folder_guess = _apply_hard_rule(folder_guess, hard_rule_build_vs_ops(title, body, names))
 
     speakers: Counter[tuple[str, str]] = Counter()
     for e in events:
@@ -649,14 +764,15 @@ def suggest(
     correct_guess = [
         {"target": t, "find": f, "replace": r, "count": n} for (t, f, r), n in corrections.most_common(8)
     ]
-    weak = not folder_guess or float(folder_guess[0]["score"]) < 2.0
+    hard = bool(folder_guess and folder_guess[0].get("hard_rule"))
+    weak = (not folder_guess or float(folder_guess[0]["score"]) < 2.0) and not hard
     return {
         "ok": True,
         "recording_id": recording_id,
         "title": title,
         "confidence": "UNVERIFIED",
         "do_not_apply": True,
-        "algo": "lift-ngrams",
+        "algo": "lift-ngrams+build_vs_ops",
         "weak": weak,
         "folders": folder_guess,
         "speakers": speaker_guess,

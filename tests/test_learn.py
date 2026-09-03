@@ -218,3 +218,32 @@ def test_lift_model_learns_without_hand_aliases(tmp_path: Path, monkeypatch: pyt
     cv = cross_validate(ledger)
     assert cv["n"] == 6
     assert cv["wrong"] <= 2
+
+
+def test_hard_rule_build_vs_ops(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ledger = tmp_path / "learn.jsonl"
+    monkeypatch.setenv("PLAUD_PLUS_LEARN", str(ledger))
+    snapshot_folders(
+        [
+            {"id": "fid-aic", "name": "AIC Holdings"},
+            {"id": "fid-arp", "name": "ARP Anthracite Realty"},
+            {"id": "fid-gmw", "name": "GMW Greenmark"},
+        ],
+        path=ledger,
+    )
+    sheet = suggest(title="08-26 Meeting: Spreadsheet Process for Anthracite Realty Partners", path=ledger)
+    assert sheet["do_not_apply"] is True
+    assert sheet["folders"][0]["folder_id"] == "fid-aic"
+    assert sheet["folders"][0].get("hard_rule")
+    pay = suggest(title="G702 retainage on a pay application", path=ledger)
+    assert pay["folders"][0]["folder_id"] == "fid-arp"
+    paseo = suggest(title="Paseo Engine High Availability", path=ledger)
+    assert paseo["folders"][0]["folder_id"] == "fid-aic"
+    gmw = suggest(
+        title="Cerebro Metrics Dashboard",
+        body="Confirmation that the production environment is at cerebro.greenmarkwaste.com.",
+        path=ledger,
+    )
+    assert gmw["folders"][0]["folder_id"] == "fid-gmw"
+    clock = suggest(title="2026-08-25 10:00:43", path=ledger)
+    assert clock["folders"] == []

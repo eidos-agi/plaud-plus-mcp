@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1 — 2026-09-03
+
+- Hard rule: building software → AIC Holdings; tenant ops (G702 / retainage / DD5 /
+  cerebro.greenmarkwaste.com) → the tenant folder. Still never auto-applied.
+
 ## 0.3.0 — 2026-09-03
 
 - Self-fitting lift/n-gram filing model (`plaud-plus learn fit` / `cv` / `rank`).
