@@ -1,0 +1,7 @@
+This package (MIT) depends on plaud-tools (LGPL-3.0-or-later) by
+massive-value: https://github.com/massive-value/plaud-tools
+
+plaud-tools is not affiliated with, endorsed by, or sponsored by Plaud Inc.
+Neither is plaud-plus-mcp. Both talk to Plaud's private web API, which their
+Terms of Service may restrict. Use at your own risk. You still need a real
+Plaud account.
