@@ -108,7 +108,9 @@ plaud-plus learn remember --claim "Haul reviews go in GMW Greenmark"
 plaud-plus learn
 ```
 
-`suggest` sets `do_not_apply: true`. Ask the human, then call `mutate_recording`.
+`snapshot` records folder names and already-filed titles. Clock titles
+(`2026-08-25 10:00:43`) return no folder guess. `suggest` sets
+`do_not_apply: true`. Ask the human, then call `mutate_recording`.
 
 ## License
 

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from plaud_plus_mcp.learn import remember, record_tool, snapshot_folders, status, suggest
+from plaud_plus_mcp.learn import remember, record_tool, snapshot_filings, snapshot_folders, status, suggest
 
 
 def test_remember_and_suggest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -58,3 +58,58 @@ def test_dry_run_correct_is_not_stored(tmp_path: Path, monkeypatch: pytest.Monke
     )
     guess = suggest(path=ledger)
     assert guess["corrections"][0]["replace"] == "Azure AD"
+
+
+def test_clock_title_and_probe_folder_do_not_match(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ledger = tmp_path / "learn.jsonl"
+    monkeypatch.setenv("PLAUD_PLUS_LEARN", str(ledger))
+    snapshot_folders(
+        [
+            {"id": "fid-probe", "name": "Plus Probe 2026-09-03"},
+            {"id": "fid-arp", "name": "ARP Anthracite Realty"},
+        ],
+        path=ledger,
+    )
+    clock = suggest(title="2026-08-25 10:00:43", path=ledger)
+    assert clock["clock_title"] is True
+    assert clock["folders"] == []
+    dated = suggest(title="09-03 Meeting: Centralized Tool Hub", path=ledger)
+    assert dated["clock_title"] is False
+    assert all(g["folder_id"] != "fid-probe" for g in dated["folders"])
+
+
+def test_snapshot_filings_and_aliases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ledger = tmp_path / "learn.jsonl"
+    monkeypatch.setenv("PLAUD_PLUS_LEARN", str(ledger))
+    snapshot_folders(
+        [
+            {"id": "fid-arp", "name": "ARP Anthracite Realty"},
+            {"id": "fid-gmw", "name": "GMW Greenmark"},
+        ],
+        path=ledger,
+    )
+    snapshot_filings(
+        [
+            {
+                "id": "r-filed",
+                "title": "08-26 Optimizing Construction Pay Application Workflow with an AI Excel Plugin",
+                "folder_id": "fid-arp",
+            }
+        ],
+        path=ledger,
+    )
+    remember(
+        "Pay apps and retainage go in ARP Anthracite Realty",
+        extra={"folder_id": "fid-arp", "terms": ["pay application", "pay app", "retainage", "lender draw"]},
+        path=ledger,
+    )
+    remember(
+        "Cerebro / DD5 / Sage haul work goes in GMW Greenmark",
+        extra={"folder_id": "fid-gmw", "terms": ["cerebro", "dd5", "sage", "fleet metrics"]},
+        path=ledger,
+    )
+    pay = suggest(title="08-13 Refining the Pay Application and Lender Draw Process", path=ledger)
+    assert pay["do_not_apply"] is True
+    assert pay["folders"][0]["folder_id"] == "fid-arp"
+    gmw = suggest(title="06-18 Meeting: Cerebro Metrics Dashboard", path=ledger)
+    assert gmw["folders"][0]["folder_id"] == "fid-gmw"

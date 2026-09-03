@@ -9,7 +9,7 @@ import sys
 
 from . import __version__
 from .auth import AuthError, desktop_available, ensure_session, keyring_get, seed_wrt_from_desktop
-from .learn import recall, remember, snapshot_folders, status, suggest
+from .learn import recall, remember, snapshot_filings, snapshot_folders, status, suggest
 
 
 def _print_json(value: object) -> None:
@@ -83,8 +83,21 @@ def cmd_learn(args: argparse.Namespace) -> int:
         except json.JSONDecodeError:
             print("plaud-plus: folders was not JSON", file=sys.stderr)
             return 2
-        n = snapshot_folders(folders if isinstance(folders, list) else [])
-        _print_json({"ok": True, "ingested": n, **status()})
+        n_folders = snapshot_folders(folders if isinstance(folders, list) else [])
+        listed_recs = subprocess.run(
+            ["plaud-tools", "list", "--limit", "500"],
+            capture_output=True,
+            text=True,
+        )
+        n_filed = 0
+        if listed_recs.returncode == 0:
+            try:
+                recs = json.loads(listed_recs.stdout)
+            except json.JSONDecodeError:
+                recs = []
+            if isinstance(recs, list):
+                n_filed = snapshot_filings(recs)
+        _print_json({"ok": True, "ingested_folders": n_folders, "ingested_filings": n_filed, **status()})
         return 0
     if action == "suggest":
         _print_json(suggest(title=args.title, recording_id=args.recording_id))

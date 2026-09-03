@@ -1,6 +1,6 @@
 [project]
 name = "plaud-plus-mcp"
-version = "0.2.0"
+version = "0.2.1"
 description = "Write-capable Plaud MCP. Official Plaud MCP is read-only; this one uses the web API."
 readme = "README.md"
 license = "MIT"

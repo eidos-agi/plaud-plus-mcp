@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1 — 2026-09-03
+
+- `learn snapshot` also ingests already-filed titles.
+- Date/clock tokens no longer match folders named like `Plus Probe 2026-09-03`.
+- Alias notes (`terms` + `folder_id`) can hint a folder. Still UNVERIFIED, still never auto-applied.
+
 ## 0.2.0 — 2026-09-03
 
 - Local observation ledger (`plaud_plus_learn` / `plaud-plus learn`).

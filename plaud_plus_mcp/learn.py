@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 TOKEN = re.compile(r"[a-z0-9]{2,}")
+CLOCK_TITLE = re.compile(r"^\d{4}-\d{2}-\d{2}(?:[ T_]\d{2}:\d{2}(?::\d{2})?)?$")
 SKIP = {
     "the",
     "and",
@@ -31,6 +32,33 @@ SKIP = {
     "meeting",
     "audio",
     "renamed",
+    "an",
+    "to",
+    "of",
+    "on",
+    "in",
+    "or",
+    "vs",
+    "is",
+    "it",
+    "ai",
+    "new",
+    "how",
+    "use",
+    "using",
+    "due",
+    "via",
+    "note",
+    "notes",
+    "reminder",
+    "idea",
+    "demo",
+    "briefing",
+    "recording",
+    "accidental",
+    "reasoning",
+    "session",
+    "imported",
 }
 
 
@@ -46,7 +74,23 @@ def ledger_path() -> Path:
 def tokens(text: str | None) -> set[str]:
     if not text:
         return set()
-    return {t for t in TOKEN.findall(text.lower()) if t not in SKIP}
+    out: set[str] = set()
+    for t in TOKEN.findall(text.lower()):
+        if t in SKIP or t.isdigit() or re.fullmatch(r"20\d{2}", t):
+            continue
+        out.add(t)
+    return out
+
+
+def is_clock_title(title: str | None) -> bool:
+    if not title:
+        return False
+    return bool(CLOCK_TITLE.match(title.strip()))
+
+
+def _is_test_folder(name: str | None) -> bool:
+    n = (name or "").lower()
+    return "probe" in n or "test folder" in n
 
 
 def append(event: dict[str, Any], path: Path | None = None) -> None:
@@ -171,6 +215,38 @@ def snapshot_folders(folders: list[dict[str, Any]], path: Path | None = None) ->
     return n
 
 
+def snapshot_filings(recordings: list[dict[str, Any]], path: Path | None = None) -> int:
+    """Ingest already-filed titles as UNVERIFIED move observations."""
+    n = 0
+    seen = {
+        (e.get("recording_id"), e.get("folder_id"))
+        for e in read_events(path)
+        if e.get("kind") == "move" and e.get("recording_id") and e.get("folder_id")
+    }
+    for rec in recordings:
+        fid = rec.get("folder_id")
+        rid = rec.get("id") or rec.get("recording_id")
+        title = rec.get("title") or rec.get("filename") or rec.get("new_name")
+        if not fid or not rid:
+            continue
+        key = (rid, fid)
+        if key in seen:
+            continue
+        append(
+            {
+                "kind": "move",
+                "action": "seen",
+                "recording_id": rid,
+                "folder_id": fid,
+                "title": title,
+            },
+            path=path,
+        )
+        seen.add(key)
+        n += 1
+    return n
+
+
 def _folder_names(events: list[dict[str, Any]]) -> dict[str, str]:
     names: dict[str, str] = {}
     for e in events:
@@ -183,16 +259,32 @@ def _folder_names(events: list[dict[str, Any]]) -> dict[str, str]:
 def suggest(*, title: str | None = None, recording_id: str | None = None, path: Path | None = None) -> dict[str, Any]:
     events = read_events(path)
     names = _folder_names(events)
+    clock = is_clock_title(title)
     hay = tokens(title)
+    title_l = (title or "").lower()
     folder_scores: Counter[str] = Counter()
-    for e in events:
-        if e.get("kind") == "move" and e.get("folder_id"):
-            blob = tokens(str(e.get("title") or "")) | tokens(names.get(str(e["folder_id"]), ""))
-            if hay and hay & blob:
-                folder_scores[str(e["folder_id"])] += 2
-        if e.get("kind") == "folder" and e.get("folder_id") and e.get("name"):
-            if hay and hay & tokens(str(e["name"])):
-                folder_scores[str(e["folder_id"])] += 3
+    if not clock:
+        for e in events:
+            if e.get("kind") == "move" and e.get("folder_id"):
+                blob = tokens(str(e.get("title") or "")) | tokens(names.get(str(e["folder_id"]), ""))
+                if hay and hay & blob:
+                    folder_scores[str(e["folder_id"])] += 2
+            if e.get("kind") == "folder" and e.get("folder_id") and e.get("name"):
+                fname = str(e["name"])
+                if _is_test_folder(fname) and "probe" not in title_l:
+                    continue
+                if hay and hay & tokens(fname):
+                    folder_scores[str(e["folder_id"])] += 3
+            if e.get("kind") == "note":
+                fid = e.get("folder_id")
+                terms = e.get("terms") if isinstance(e.get("terms"), list) else []
+                term_hit = any(
+                    isinstance(term, str) and len(term) >= 3 and term.lower() in title_l for term in terms
+                )
+                if term_hit and isinstance(fid, str):
+                    folder_scores[fid] += 4
+                elif isinstance(fid, str) and hay and hay & tokens(str(e.get("claim") or "")):
+                    folder_scores[fid] += 2
     speakers: Counter[tuple[str, str]] = Counter()
     for e in events:
         if e.get("kind") == "rename_speaker" and e.get("original_label") and e.get("new_name"):
@@ -204,6 +296,8 @@ def suggest(*, title: str | None = None, recording_id: str | None = None, path: 
 
     folder_guess = []
     for fid, score in folder_scores.most_common(5):
+        if _is_test_folder(names.get(fid)) and "probe" not in title_l:
+            continue
         folder_guess.append({"folder_id": fid, "name": names.get(fid), "score": score})
     speaker_guess = [
         {"original_label": a, "new_name": b, "count": n} for (a, b), n in speakers.most_common(8)
@@ -221,7 +315,12 @@ def suggest(*, title: str | None = None, recording_id: str | None = None, path: 
         "speakers": speaker_guess,
         "corrections": correct_guess,
         "events": len(events),
-        "note": "Guesses from local write history. Ask the human before mutate_recording / edit_transcript.",
+        "clock_title": clock,
+        "note": (
+            "Clock title — do not guess a tenant from the timestamp."
+            if clock
+            else "Guesses from local write history. Ask the human before mutate_recording / edit_transcript."
+        ),
     }
 
 

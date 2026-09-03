@@ -11,14 +11,15 @@ from typing import Any
 import mcp.server.stdio
 import mcp.types as types
 from mcp.server.lowlevel import Server
-from plaud_tools.core.client import PlaudClient
+from plaud_tools.core.client import PlaudClient, PlaudRecordingQuery
+from plaud_tools.core.query import summarize_recording
 from plaud_tools.core.session import SessionManager, SessionStore
 from plaud_tools.mcp_pt.mcp import build_handlers
 from plaud_tools.mcp_pt.server import _TOOLS
 
 from . import __version__
 from .auth import AuthError, ensure_session
-from .learn import recall, record_tool, remember, snapshot_folders, status, suggest
+from .learn import recall, record_tool, remember, snapshot_filings, snapshot_folders, status, suggest
 
 LEARN_TOOL = types.Tool(
     name="plaud_plus_learn",
@@ -109,13 +110,34 @@ def _learn_handler(get_client: Any, get_folders: Any) -> Any:
             try:
                 result = get_folders()
                 payload = json.loads(result["content"][0]["text"])
-                n = snapshot_folders(_folders_from_list(payload))
+                n_folders = snapshot_folders(_folders_from_list(payload))
+                n_filed = 0
+                client = get_client()
+                if client is not None:
+                    recs: list[dict[str, Any]] = []
+                    skip = 0
+                    page = 200
+                    while True:
+                        batch = client.list_recordings(
+                            PlaudRecordingQuery(
+                                skip=skip, limit=page, is_trash=0, sort_by="start_time", is_desc=True
+                            )
+                        )
+                        if not batch:
+                            break
+                        recs.extend(summarize_recording(r) for r in batch)
+                        if len(batch) < page:
+                            break
+                        skip += page
+                    n_filed = snapshot_filings(recs)
             except Exception as exc:
                 return _json_tool(
                     {"error": f"snapshot failed: {exc}", "error_code": "api_error", "retryable": True},
                     is_error=True,
                 )
-            return _json_tool({"ok": True, "ingested": n, **status()})
+            return _json_tool(
+                {"ok": True, "ingested": n_folders + n_filed, "ingested_folders": n_folders, "ingested_filings": n_filed, **status()}
+            )
         if action == "suggest":
             hint_title = title
             if recording_id and not hint_title:
