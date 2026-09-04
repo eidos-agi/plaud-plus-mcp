@@ -28,18 +28,22 @@ function draw() {
   el.innerHTML = [
     '<div class="desk">',
     '<section class="pane tape">',
+    '<div class="tape-top">',
     '<p class="meta"></p>',
     "<h1></h1>",
     '<div class="chips" id="chips"></div>',
     '<p class="blurb" id="blurb"></p>',
+    "</div>",
+    '<pre class="transcript" id="transcript" hidden tabindex="0"></pre>',
+    '<div class="tape-foot">',
     '<p class="guess" id="guess"></p>',
     '<textarea class="note" id="note" placeholder="Who was there, where, what this actually is…"></textarea>',
     '<div class="folders" id="folders"></div>',
     '<div class="more">',
     '<button class="skip" id="skip">Skip <kbd>S</kbd></button>',
-    '<button class="deep" id="deep">Dive deeper <kbd>D</kbd></button>',
+    '<button class="deep" id="deep">Full transcript <kbd>D</kbd></button>',
     '<button class="trash" id="trash">Trash <kbd>T</kbd></button>',
-    "</div></section>",
+    "</div></div></section>",
     '<section class="pane harness">',
     '<div class="harness-head"><h2>Filing harness</h2><span class="model"></span><span class="cannot">cannot file</span></div>',
     '<div class="chatlog" id="chatlog"></div>',
@@ -53,6 +57,7 @@ function draw() {
   el.querySelector(".harness-head .model").textContent = card.chat_model || "DeepSeek";
   fillChips();
   fillBlurb();
+  fillTranscript();
   fillGuess();
   fillFolders();
   const note = el.querySelector("#note");
@@ -93,8 +98,32 @@ function fillBlurb() {
   preview = preview.replace(/^#+\s*core synopsis\s*/i, "");
   if (preview) {
     blurb.textContent = preview;
-    if (card.deep_text) blurb.classList.add("deep");
   } else blurb.remove();
+}
+
+function fillTranscript() {
+  const el = document.getElementById("transcript");
+  const deep = document.getElementById("deep");
+  const tape = document.querySelector(".tape");
+  const text = card.transcript || "";
+  if (!el) return;
+  if (text) {
+    el.hidden = false;
+    if (tape) tape.classList.add("reading");
+    el.textContent = text;
+    const n = card.utterances;
+    const chars = card.transcript_chars || text.length;
+    el.setAttribute(
+      "data-label",
+      (n ? n + " utterances · " : "") + chars.toLocaleString() + " chars",
+    );
+    if (deep) deep.textContent = "Transcript";
+  } else {
+    el.hidden = true;
+    el.textContent = "";
+    if (tape) tape.classList.remove("reading");
+    if (card.deep && deep) deep.textContent = "No transcript yet";
+  }
 }
 
 function liftGuess() {
@@ -335,6 +364,11 @@ async function skip() {
 }
 
 async function deepen() {
+  const deep = document.getElementById("deep");
+  if (deep) {
+    deep.disabled = true;
+    deep.textContent = "Loading transcript…";
+  }
   const r = await fetch("/api/deepen", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -342,6 +376,8 @@ async function deepen() {
   });
   card = await r.json();
   draw();
+  const el = document.getElementById("transcript");
+  if (el && !el.hidden) el.focus();
 }
 
 async function trash() {

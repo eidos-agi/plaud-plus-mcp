@@ -44,7 +44,7 @@ The scorer looks at **who** (with context — Clayton is not a folder),
 **where**, and **when**, then lift/n-grams. Product-noun rules are a
 tie-break only. Never apply a guess without asking. Human training UI: `plaud-plus train`
 (http://127.0.0.1:7843/). Two panes: tape + filing harness. Y = agree, S = skip,
-D = transcript, T twice = trash. Harness is official DeepSeek, no tools, cannot file.
+D = full transcript, T twice = trash. Harness is official DeepSeek, no tools, cannot file.
 
 ## Failure modes
 

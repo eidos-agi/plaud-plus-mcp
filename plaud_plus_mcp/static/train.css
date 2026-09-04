@@ -64,7 +64,49 @@ header .keys {
   flex-direction: column;
   overflow: hidden;
 }
-.tape { padding: 22px 22px 16px; overflow: auto; }
+.tape {
+  padding: 22px 22px 16px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.tape-top, .tape-foot { flex-shrink: 0; }
+.transcript {
+  display: block;
+  flex: 1 1 auto;
+  min-height: 12em;
+  max-height: calc(100vh - 420px);
+  margin: 0 0 12px;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--rule);
+  background: var(--bench);
+  overflow: auto;
+  overflow-x: hidden;
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.45;
+  color: #3d2f18;
+}
+.tape.reading .blurb { display: none; }
+.tape.reading h1 {
+  font-size: 1.2rem;
+  margin-bottom: 8px;
+}
+.tape.reading .transcript {
+  min-height: 16em;
+  max-height: calc(100vh - 360px);
+}
+.transcript:focus { outline: 2px solid var(--ink); outline-offset: 2px; }
+.transcript::before {
+  content: attr(data-label);
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mute);
+  margin-bottom: 8px;
+}
 .harness { background: var(--bench); overflow: hidden; }
 .meta {
   color: var(--mute);
@@ -92,15 +134,7 @@ h1 {
   max-height: 12em;
   overflow: auto;
 }
-.blurb.deep {
-  max-height: none;
-  overflow: auto;
-  white-space: pre-wrap;
-  font-size: 14px;
-  border-top: 1px solid var(--rule);
-  padding-top: 12px;
-  flex: 0 1 auto;
-}
+.blurb.deep { max-height: 6em; }
 .guess {
   font-style: italic;
   color: var(--mute);

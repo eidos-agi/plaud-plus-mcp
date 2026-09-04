@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1 — 2026-09-04
+
+- Train UI **D** loads the full transcript into a scrollable pane. No 8k/12k clip.
+
 ## 0.6.0 — 2026-09-04
 
 - Train UI is a two-pane desk: tape on the left, filing harness on the right.

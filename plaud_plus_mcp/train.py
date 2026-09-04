@@ -90,6 +90,18 @@ def append_chat(recording_id: str, message: dict[str, Any]) -> None:
         fh.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
 
 
+def tape_fields(body: str | None, trans: str | None, utterances: Any = None) -> dict[str, Any]:
+    """Summary stays short. Transcript is the full string — never sliced."""
+    out: dict[str, Any] = {"body_preview": (body or "")[:400]}
+    if trans:
+        out["transcript"] = trans
+        out["deep"] = True
+        out["transcript_chars"] = len(trans)
+        if isinstance(utterances, int):
+            out["utterances"] = utterances
+    return out
+
+
 def folder_buttons(folders: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out = []
     for folder in folders:
@@ -193,8 +205,7 @@ class TrainSession:
             hour = datetime.fromtimestamp(ts).hour
         speakers = list(getattr(detail, "speakers", None) or [])
         trans = getattr(detail, "transcript", None) if transcript else cached.get("transcript")
-        if isinstance(trans, str) and len(trans) > 12000:
-            trans = trans[:12000] + "\n…"
+        segs = getattr(detail, "transcript_segments", None) if transcript else None
         out = {
             "id": rid,
             "ready": True,
@@ -204,6 +215,7 @@ class TrainSession:
             "hour": hour,
             "speakers": speakers,
             "transcript": trans if isinstance(trans, str) else cached.get("transcript"),
+            "utterances": len(segs) if isinstance(segs, list) else cached.get("utterances"),
         }
         self._cache = out
         return out
@@ -262,9 +274,7 @@ class TrainSession:
             "body_preview": (body or "")[:400],
             "chat": chat,
         }
-        if trans:
-            payload["deep_text"] = combined[:8000]
-            payload["deep"] = True
+        payload.update(tape_fields(body, trans if isinstance(trans, str) else None, info.get("utterances")))
         cfg = llm_config()
         if cfg:
             payload["chat_model"] = f"DeepSeek {cfg['model']}"

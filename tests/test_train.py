@@ -11,6 +11,7 @@ from plaud_plus_mcp.train import (
     load_chat,
     page_bundle,
     recording_view,
+    tape_fields,
 )
 
 
@@ -51,7 +52,8 @@ def test_page_has_yes_and_skip_keys() -> None:
     assert "/api/deepen" in page
     assert "/api/trash" in page
     assert "body_preview" in page or "blurb" in page
-    assert "Dive deeper" in page
+    assert "Full transcript" in page
+    assert 'id="transcript"' in page
     assert "Trash" in page
     assert 'id="note"' in page
     assert "TEXTAREA" in page
@@ -60,6 +62,17 @@ def test_page_has_yes_and_skip_keys() -> None:
     assert "thinking" in page
     assert "desk" in page
     assert "cannot file" in page
+
+
+def test_tape_fields_keeps_full_transcript() -> None:
+    trans = ("Speaker: hello\n\n" * 2000)
+    assert len(trans) > 8000
+    fields = tape_fields("short summary", trans, utterances=12)
+    assert fields["transcript"] == trans
+    assert fields["transcript_chars"] == len(trans)
+    assert fields["utterances"] == 12
+    assert fields["deep"] is True
+    assert len(fields["body_preview"]) <= 400
 
 
 def test_chat_persists_to_disk(tmp_path, monkeypatch) -> None:

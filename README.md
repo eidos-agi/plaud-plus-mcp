@@ -122,7 +122,7 @@ plaud-plus train --no-open --port 7843
 ```
 
 One card at a time. Click a folder (or **Y** if the guess is right). **S**
-skips. **D** dives into the transcript. **T** twice sends to Plaud trash
+skips. **D** opens the **full transcript** (scrollable). **T** twice sends to Plaud trash
 (reversible). A folder click files and refits. Type a note on the card (who / where / what) before you file — it trains
 with the label. Shortcuts are off while the note box is focused.
 Two panes: the recording on the left, a **filing harness** on the right.
