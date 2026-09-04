@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.0 — 2026-09-04
+
+- Train UI is a two-pane desk: tape on the left, filing harness on the right.
+- The harness is ours — official DeepSeek, streaming thinking, no tools, cannot file.
+- Harness folder guesses sit next to the lift model. Human still clicks.
+
 ## 0.5.5 — 2026-09-04
 
 - Train chat uses the official DeepSeek API (`DEEPSEEK_API_KEY` or keychain

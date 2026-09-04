@@ -3,16 +3,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from plaud_plus_mcp import train
+from plaud_plus_mcp import harness, train
+from plaud_plus_mcp.harness import complete_chat, llm_config, parse_chat_message
 from plaud_plus_mcp.train import (
-    PAGE,
     append_chat,
-    complete_chat,
     folder_buttons,
     load_chat,
-    parse_chat_message,
+    page_bundle,
     recording_view,
-    _llm_config,
 )
 
 
@@ -45,20 +43,23 @@ def test_recording_view_extracts_people_and_place() -> None:
 
 
 def test_page_has_yes_and_skip_keys() -> None:
-    assert "Plus train" in PAGE
-    assert 'e.key === "s"' in PAGE
-    assert "/api/label" in PAGE
-    assert "/api/skip" in PAGE
-    assert "/api/deepen" in PAGE
-    assert "/api/trash" in PAGE
-    assert "body_preview" in PAGE or "blurb" in PAGE
-    assert "Dive deeper" in PAGE
-    assert "Trash" in PAGE
-    assert 'id="note"' in PAGE
-    assert "TEXTAREA" in PAGE
-    assert "/api/chat" in PAGE
-    assert "DeepSeek" in PAGE
-    assert "thinking" in PAGE
+    page = page_bundle()
+    assert "Plus train" in page
+    assert 'e.key === "s"' in page
+    assert "/api/label" in page
+    assert "/api/skip" in page
+    assert "/api/deepen" in page
+    assert "/api/trash" in page
+    assert "body_preview" in page or "blurb" in page
+    assert "Dive deeper" in page
+    assert "Trash" in page
+    assert 'id="note"' in page
+    assert "TEXTAREA" in page
+    assert "/api/chat/stream" in page
+    assert "Filing harness" in page
+    assert "thinking" in page
+    assert "desk" in page
+    assert "cannot file" in page
 
 
 def test_chat_persists_to_disk(tmp_path, monkeypatch) -> None:
@@ -72,16 +73,11 @@ def test_chat_persists_to_disk(tmp_path, monkeypatch) -> None:
     assert (tmp_path / "chats" / "rec-1.jsonl").is_file()
 
 
-def test_page_chat_heading_uses_model() -> None:
-    assert "chat_model" in PAGE
-    assert "on this recording" in PAGE
-
-
 def test_llm_config_uses_official_deepseek(monkeypatch) -> None:
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test-official")
     monkeypatch.setenv("OPENROUTER_API_KEY", "should-not-be-used")
     monkeypatch.setenv("DSH_HOME", "/tmp/not-a-real-dsh")
-    cfg = _llm_config()
+    cfg = llm_config()
     assert cfg is not None
     assert cfg["url"] == "https://api.deepseek.com/v1/chat/completions"
     assert cfg["model"] == "deepseek-v4-flash"
@@ -94,8 +90,8 @@ def test_llm_config_ignores_openrouter_and_dsh(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-test")
     monkeypatch.setenv("DSH_HOME", str(tmp_path))
     (tmp_path / ".credentials.yaml").write_text('OPENROUTER_API_KEY: "leaked"\n')
-    monkeypatch.setattr(train, "_deepseek_key", lambda: None)
-    assert _llm_config() is None
+    monkeypatch.setattr(harness, "deepseek_key", lambda: None)
+    assert llm_config() is None
 
 
 def test_parse_chat_prefers_reasoning_content() -> None:
@@ -142,24 +138,22 @@ def test_complete_chat_posts_to_official_api(monkeypatch) -> None:
 
     def fake_urlopen(req, timeout=0):
         captured["url"] = req.full_url
-        captured["timeout"] = timeout
         captured["body"] = json.loads(req.data.decode())
-        captured["auth"] = req.get_header("Authorization")
         return FakeResp()
 
-    monkeypatch.setattr(train.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(harness.urllib.request, "urlopen", fake_urlopen)
     text, thinking = complete_chat([{"role": "user", "content": "which folder?"}])
     assert captured["url"] == "https://api.deepseek.com/v1/chat/completions"
     assert captured["body"]["model"] == "deepseek-v4-flash"
     assert captured["body"]["thinking"] == {"type": "enabled"}
-    assert captured["body"]["reasoning_effort"] == "high"
+    assert "tools" not in captured["body"]
     assert "openrouter" not in captured["url"]
     assert text == "Personal"
     assert thinking == "late night family"
 
 
 def test_train_source_has_no_openrouter_or_dsh() -> None:
-    src = Path(train.__file__).read_text(encoding="utf-8")
+    src = Path(train.__file__).read_text(encoding="utf-8") + Path(harness.__file__).read_text(encoding="utf-8")
     assert "OPENROUTER" not in src
     assert "openrouter.ai" not in src
     assert "DSH_HOME" not in src

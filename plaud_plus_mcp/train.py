@@ -1,24 +1,27 @@
 """Mini HITL trainer: one unfiled recording, human picks a folder, model refits.
 
 Local only. Never files without a click. Not lessons.md CONFIRMED.
+Filing chat is our own DeepSeek harness — not DSH, not a coding agent.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import sys
 import threading
-import urllib.error
-import urllib.request
-import webbrowser
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 from urllib.parse import parse_qs, urlparse
 
 from .auth import AuthError, ensure_session
+from .harness import (
+    build_filing_messages,
+    llm_config,
+    parse_folder_suggestion,
+    stream_chat,
+)
 from .learn import (
     _is_test_folder,
     extract_people,
@@ -31,480 +34,26 @@ from .learn import (
     suggest,
 )
 
-PAGE = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Plus train</title>
-<style>
-  :root {
-    --ink: #1c140c;
-    --paper: #f3ead8;
-    --rule: #cbb892;
-    --mute: #6e5c3e;
-    --yes: #1c140c;
-  }
-  * { box-sizing: border-box; }
-  html, body { height: 100%; margin: 0; }
-  body {
-    font-family: Palatino, "Palatino Linotype", "Iowan Old Style", "Times New Roman", serif;
-    background: var(--ink);
-    color: var(--ink);
-    min-height: 100%;
-  }
-  .stage {
-    min-height: 100%;
-    display: flex;
-    flex-direction: column;
-    padding: 28px 22px 40px;
-    max-width: 720px;
-    margin: 0 auto;
-  }
-  header {
-    color: #e8d7b0;
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    font-size: 13px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    margin-bottom: 18px;
-  }
-  header strong { letter-spacing: 0.16em; }
-  .card {
-    background: var(--paper);
-    border-radius: 2px;
-    padding: 28px 28px 24px;
-    box-shadow: 8px 10px 0 #000;
-    flex: 1;
-  }
-  .meta {
-    color: var(--mute);
-    font-size: 14px;
-    margin: 0 0 10px;
-  }
-  h1 {
-    font-size: clamp(1.4rem, 3vw, 2rem);
-    line-height: 1.2;
-    margin: 0 0 16px;
-    font-weight: 600;
-  }
-  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 18px; }
-  .chip {
-    border: 1px solid var(--rule);
-    padding: 3px 9px;
-    font-size: 13px;
-    color: var(--mute);
-  }
-  .blurb {
-    font-size: 15px;
-    line-height: 1.45;
-    color: #3d2f18;
-    margin: 0 0 16px;
-    max-height: 7.5em;
-    overflow: hidden;
-  }
-  .guess {
-    font-style: italic;
-    color: var(--mute);
-    margin: 0 0 22px;
-    font-size: 15px;
-  }
-  .guess b { font-style: normal; color: var(--ink); }
-  .note {
-    display: block;
-    width: 100%;
-    min-height: 5.5em;
-    margin: 0 0 18px;
-    padding: 10px 12px;
-    border: 0;
-    border-top: 1px solid var(--rule);
-    border-bottom: 1px solid var(--rule);
-    background: #efe6d0;
-    color: var(--ink);
-    font-family: inherit;
-    font-size: 16px;
-    line-height: 1.4;
-    resize: vertical;
-  }
-  .note:focus { outline: 2px solid var(--ink); outline-offset: -2px; }
-  .note::placeholder { color: #9a855c; }
-  .chat {
-    margin: 0 0 18px;
-    border: 1px solid var(--rule);
-    background: #efe6d0;
-  }
-  .chat h2 {
-    margin: 0;
-    padding: 8px 12px;
-    font-size: 12px;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--mute);
-    font-weight: 600;
-    border-bottom: 1px solid var(--rule);
-  }
-  .chatlog {
-    max-height: 14em;
-    overflow: auto;
-    padding: 10px 12px;
-    font-size: 15px;
-    line-height: 1.4;
-  }
-  .chatlog .who { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--mute); margin: 8px 0 2px; }
-  .chatlog .who:first-child { margin-top: 0; }
-  .chatrow { white-space: pre-wrap; }
-  .think {
-    margin: 6px 0 8px;
-    padding: 8px 10px;
-    background: #e6dcc4;
-    color: #5a4a30;
-    font-size: 13px;
-    line-height: 1.35;
-    white-space: pre-wrap;
-  }
-  .think summary {
-    cursor: pointer;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    font-size: 11px;
-    color: var(--mute);
-  }
-  .chatform { display: flex; gap: 8px; padding: 8px; border-top: 1px solid var(--rule); }
-  .chatform input {
-    flex: 1;
-    font-family: inherit;
-    font-size: 15px;
-    padding: 8px 10px;
-    border: 0;
-    background: var(--paper);
-    color: var(--ink);
-  }
-  .chatform button {
-    border-left: 0;
-    background: var(--ink);
-    color: var(--paper);
-    font-size: 15px;
-    padding: 8px 12px;
-  }
-  .folders { display: flex; flex-direction: column; gap: 8px; }
-  button {
-    font-family: inherit;
-    font-size: 17px;
-    text-align: left;
-    padding: 12px 14px;
-    border: 0;
-    cursor: pointer;
-    background: #fff8ea;
-    color: var(--ink);
-    border-left: 8px solid #888;
-  }
-  button.yes {
-    background: var(--yes);
-    color: var(--paper);
-    font-size: 19px;
-    padding: 16px 16px;
-  }
-  button:disabled { opacity: 0.4; cursor: wait; }
-  .more {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 16px;
-    margin-top: 16px;
-    align-items: center;
-  }
-  .skip, .deep, .trash {
-    background: none;
-    border: 0;
-    color: var(--mute);
-    padding: 0;
-    font-size: 15px;
-    text-decoration: underline;
-    cursor: pointer;
-    font-family: inherit;
-  }
-  .trash { color: #8a2f1f; }
-  .trash.armed { color: #c0392b; font-weight: 600; text-decoration: none; }
-  .blurb.deep {
-    max-height: 22em;
-    overflow: auto;
-    white-space: pre-wrap;
-    font-size: 14px;
-    border-top: 1px solid var(--rule);
-    padding-top: 12px;
-  }
-  .empty { color: var(--paper); padding: 40px 8px; }
-  .err { color: #ffb4a2; margin: 12px 0; }
-  kbd {
-    font-family: ui-monospace, Menlo, monospace;
-    font-size: 11px;
-    border: 1px solid var(--rule);
-    padding: 0 5px;
-    margin-left: 8px;
-    color: var(--mute);
-  }
-  button.yes kbd { color: #cbb892; border-color: #6e5c3e; }
-</style>
-</head>
-<body>
-  <div class="stage">
-    <header>
-      <strong>Plus train</strong>
-      <span id="stats">…</span>
-    </header>
-    <div id="root">loading</div>
-  </div>
-<script>
-let card = null;
-const notesById = {};
-async function load() {
-  const r = await fetch("/api/card");
-  card = await r.json();
-  draw();
+STATIC = Path(__file__).parent / "static"
+MIME = {
+    ".html": "text/html; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
 }
-function draw() {
-  trashArmed = false;
-  const el = document.getElementById("root");
-  const st = document.getElementById("stats");
-  st.textContent = (card.labeled ?? 0) + " labeled · " + (card.trashed ?? 0) + " trash · " + (card.left ?? 0) + " left";
-  if (card.error) {
-    el.innerHTML = '<p class="err"></p>';
-    el.querySelector(".err").textContent = card.error;
-    return;
-  }
-  if (card.done) {
-    el.innerHTML = '<div class="empty"><h1>Queue is empty.</h1><p>Labeled this session: '
-      + (card.labeled ?? 0) + "</p></div>";
-    return;
-  }
-  const rec = card.recording;
-  const guess = (card.guess && card.guess.folders && card.guess.folders[0]) || null;
-  const people = (rec.people || []).map(p => '<span class="chip"></span>');
-  const folders = card.folders || [];
-  let html = '<div class="card">';
-  html += '<p class="meta"></p>';
-  html += "<h1></h1>";
-  html += '<div class="chips" id="chips"></div>';
-  html += '<p class="blurb" id="blurb"></p>';
-  html += '<p class="guess"></p>';
-  html += '<textarea class="note" id="note" placeholder="Who was there, where, what this actually is…"></textarea>';
-  html += '<div class="chat"><h2></h2>';
-  html += '<div class="chatlog" id="chatlog"></div>';
-  html += '<form class="chatform" id="chatform"><input id="chatq" autocomplete="off" placeholder="Ask — it cannot file"/>';
-  html += '<button type="submit">Ask</button></form></div>';
-  html += '<div class="folders" id="folders"></div>';
-  html += '<div class="more">';
-  html += '<button class="skip" id="skip">Skip <kbd>S</kbd></button>';
-  html += '<button class="deep" id="deep">Dive deeper <kbd>D</kbd></button>';
-  html += '<button class="trash" id="trash">Trash <kbd>T</kbd></button>';
-  html += "</div></div>";
-  el.innerHTML = html;
-  el.querySelector(".meta").textContent = rec.when + " · " + rec.mins + " min";
-  el.querySelector("h1").textContent = rec.title;
-  el.querySelector(".chat h2").textContent = (card.chat_model || "DeepSeek") + " on this recording";
-  const chips = el.querySelector("#chips");
-  (rec.people || []).forEach(p => {
-    const s = document.createElement("span");
-    s.className = "chip";
-    s.textContent = p;
-    chips.appendChild(s);
-  });
-  (rec.places || []).forEach(p => {
-    const s = document.createElement("span");
-    s.className = "chip";
-    s.textContent = p;
-    chips.appendChild(s);
-  });
-  const blurb = el.querySelector("#blurb");
-  const preview = card.deep_text || card.body_preview;
-  if (preview) {
-    blurb.textContent = preview;
-    if (card.deep_text) blurb.classList.add("deep");
-  } else blurb.remove();
-  const g = el.querySelector(".guess");
-  if (guess) {
-    const why = (guess.why || []).slice(0, 4).map(w => w.term).join(", ");
-    g.innerHTML = "model leans <b></b>" + (why ? " — " + why : "");
-    g.querySelector("b").textContent = guess.name || "?";
-  } else {
-    g.textContent = "no guess — you pick";
-  }
-  const box = el.querySelector("#folders");
-  folders.forEach((f, i) => {
-    const b = document.createElement("button");
-    const isYes = guess && f.id === guess.folder_id;
-    b.className = isYes ? "yes" : "";
-    b.style.borderLeftColor = f.color || "#888";
-    b.textContent = (isYes ? "Yes — " : "") + f.name;
-    const k = document.createElement("kbd");
-    k.textContent = isYes ? "Y" : String(i + 1);
-    b.appendChild(k);
-    b.onclick = () => label(f.id, b);
-    box.appendChild(b);
-  });
-  const note = el.querySelector("#note");
-  note.value = notesById[rec.id] || "";
-  note.addEventListener("input", () => { notesById[rec.id] = note.value; });
-  const log = el.querySelector("#chatlog");
-  (card.chat || []).forEach(m => {
-    const w = document.createElement("div");
-    w.className = "who";
-    w.textContent = m.role === "user" ? "You" : "DeepSeek";
-    log.appendChild(w);
-    if (m.thinking) {
-      const d = document.createElement("details");
-      d.className = "think";
-      d.open = true;
-      const s = document.createElement("summary");
-      s.textContent = "thinking";
-      const p = document.createElement("div");
-      p.textContent = m.thinking;
-      d.appendChild(s);
-      d.appendChild(p);
-      log.appendChild(d);
-    }
-    if (m.text) {
-      const t = document.createElement("div");
-      t.className = "chatrow";
-      t.textContent = m.text;
-      log.appendChild(t);
-    }
-  });
-  log.scrollTop = log.scrollHeight;
-  el.querySelector("#chatform").onsubmit = (ev) => { ev.preventDefault(); ask(); };
-  el.querySelector("#skip").onclick = () => skip();
-  el.querySelector("#deep").onclick = () => deepen();
-  const trashBtn = el.querySelector("#trash");
-  trashBtn.onclick = () => trashClick(trashBtn);
-}
-function noteText() {
-  const t = document.getElementById("note");
-  const v = t ? t.value : (card && card.recording ? notesById[card.recording.id] : "") || "";
-  if (card && card.recording) notesById[card.recording.id] = v;
-  return v.trim();
-}
-async function ask() {
-  const q = document.getElementById("chatq");
-  const text = (q && q.value || "").trim();
-  if (!text) return;
-  q.value = "";
-  const r = await fetch("/api/chat", {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({ recording_id: card.recording.id, message: text, notes: noteText() }),
-  });
-  card = await r.json();
-  draw();
-  const again = document.getElementById("chatq");
-  if (again) again.focus();
-}
-let trashArmed = false;
-function trashClick(btn) {
-  if (!trashArmed) {
-    trashArmed = true;
-    btn.classList.add("armed");
-    btn.textContent = "Trash for real?";
-    const k = document.createElement("kbd");
-    k.textContent = "T";
-    btn.appendChild(k);
-    return;
-  }
-  trashArmed = false;
-  trash();
-}
-async function label(folderId, btn) {
-  document.querySelectorAll("button").forEach(b => b.disabled = true);
-  const r = await fetch("/api/label", {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({ recording_id: card.recording.id, folder_id: folderId, notes: noteText() }),
-  });
-  card = await r.json();
-  draw();
-}
-async function skip() {
-  trashArmed = false;
-  const r = await fetch("/api/skip", {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({ recording_id: card.recording && card.recording.id, notes: noteText() }),
-  });
-  card = await r.json();
-  draw();
-}
-async function deepen() {
-  const r = await fetch("/api/deepen", {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({ recording_id: card.recording.id, notes: noteText() }),
-  });
-  card = await r.json();
-  draw();
-}
-async function trash() {
-  document.querySelectorAll("button").forEach(b => b.disabled = true);
-  const r = await fetch("/api/trash", {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({ recording_id: card.recording.id, notes: noteText() }),
-  });
-  card = await r.json();
-  draw();
-}
-document.addEventListener("keydown", (e) => {
-  if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || !card || !card.recording) return;
-  if (e.key === "s" || e.key === "S") { skip(); return; }
-  if (e.key === "d" || e.key === "D") { deepen(); return; }
-  if (e.key === "t" || e.key === "T") {
-    const btn = document.getElementById("trash");
-    if (btn) trashClick(btn);
-    return;
-  }
-  if ((e.key === "y" || e.key === "Y") && card.guess && card.guess.folders && card.guess.folders[0]) {
-    label(card.guess.folders[0].folder_id);
-    return;
-  }
-  const n = parseInt(e.key, 10);
-  if (n >= 1 && card.folders && card.folders[n - 1]) label(card.folders[n - 1].id);
-});
-load();
-</script>
-</body>
-</html>
-"""
 
 
-DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
-DEEPSEEK_MODEL = "deepseek-v4-flash"
-KR_LLM_ACCOUNT = "deepseek"
+def static_bytes(name: str) -> bytes:
+    path = (STATIC / name).resolve()
+    if path.parent != STATIC.resolve() or not path.is_file():
+        raise FileNotFoundError(name)
+    return path.read_bytes()
 
 
-def _deepseek_key() -> str | None:
-    """Official DeepSeek key only. Never OpenRouter, never DSH, never logs the secret."""
-    env = (os.environ.get("DEEPSEEK_API_KEY") or "").strip()
-    if env:
-        return env
-    try:
-        import keyring
-
-        stored = keyring.get_password("plaud-plus", KR_LLM_ACCOUNT)
-    except Exception:
-        return None
-    stored = (stored or "").strip()
-    return stored or None
-
-
-def _llm_config() -> dict[str, str] | None:
-    key = _deepseek_key()
-    if not key:
-        return None
-    return {
-        "url": DEEPSEEK_URL,
-        "model": os.environ.get("PLAUD_PLUS_LLM_MODEL") or DEEPSEEK_MODEL,
-        "key": key,
-        "name": "DeepSeek",
-    }
+def page_bundle() -> str:
+    return "".join(
+        (STATIC / name).read_text(encoding="utf-8")
+        for name in ("train.html", "train.css", "train.js")
+    )
 
 
 def chats_dir() -> Path:
@@ -539,55 +88,6 @@ def append_chat(recording_id: str, message: dict[str, Any]) -> None:
     row = {"ts": int(datetime.now().timestamp()), **message}
     with dest.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
-
-
-def parse_chat_message(data: dict[str, Any]) -> tuple[str, str]:
-    """content + reasoning_content from official DeepSeek. Never logs the key."""
-    try:
-        msg = data["choices"][0]["message"]
-    except (KeyError, IndexError, TypeError):
-        return "DeepSeek returned an empty reply.", ""
-    text = str(msg.get("content") or "").strip()
-    thinking = str(msg.get("reasoning_content") or msg.get("reasoning") or "").strip()
-    if not text and thinking:
-        text = thinking.split("\n\n")[-1].strip()
-    return text or "DeepSeek returned an empty reply.", thinking
-
-
-def complete_chat(messages: list[dict[str, str]]) -> tuple[str, str]:
-    cfg = _llm_config()
-    if not cfg:
-        return (
-            "No DeepSeek key. Set DEEPSEEK_API_KEY or store it in the "
-            "plaud-plus keychain (account deepseek). Not OpenRouter, not a coding agent.",
-            "",
-        )
-    body: dict[str, Any] = {
-        "model": cfg["model"],
-        "messages": messages,
-        "max_tokens": 4096,
-        "thinking": {"type": "enabled"},
-        "reasoning_effort": "high",
-    }
-    payload = json.dumps(body).encode("utf-8")
-    req = urllib.request.Request(
-        cfg["url"],
-        data=payload,
-        headers={
-            "Authorization": f"Bearer {cfg['key']}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        err = exc.read().decode("utf-8", errors="replace")[:300]
-        return f"DeepSeek HTTP {exc.code}: {err}", ""
-    except Exception as exc:
-        return f"DeepSeek failed: {exc}", ""
-    return parse_chat_message(data)
 
 
 def folder_buttons(folders: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -708,6 +208,22 @@ class TrainSession:
         self._cache = out
         return out
 
+    def _filing_messages(self, rec: dict[str, Any], message: str, notes: str | None) -> list[dict[str, str]]:
+        info = self._enrich(rec)
+        buttons = folder_buttons(self._folders)
+        return build_filing_messages(
+            title=str(rec.get("title") or ""),
+            when=str(rec.get("when") or ""),
+            hour=info.get("hour"),
+            mins=rec.get("mins"),
+            notes=notes,
+            summary=(info.get("body") or "")[:2500],
+            transcript=((info.get("transcript") or "")[:2500] or None),
+            folders=[f["name"] for f in buttons],
+            history=load_chat(str(rec.get("id"))),
+            message=message,
+        )
+
     def card(self) -> dict[str, Any]:
         buttons = folder_buttons(self._folders)
         base = {
@@ -731,18 +247,25 @@ class TrainSession:
         view = recording_view(rec, combined or body, hour)
         view["headline"] = info.get("headline")
         view["speakers"] = info.get("speakers") or []
+        chat = load_chat(str(rec.get("id")))
+        harness_guess = None
+        for row in reversed(chat):
+            if row.get("role") == "assistant" and row.get("text"):
+                harness_guess = parse_folder_suggestion(str(row["text"]), buttons)
+                break
         payload = {
             **base,
             "done": False,
             "recording": view,
             "guess": guess,
+            "harness_guess": harness_guess,
             "body_preview": (body or "")[:400],
+            "chat": chat,
         }
         if trans:
             payload["deep_text"] = combined[:8000]
             payload["deep"] = True
-        payload["chat"] = load_chat(str(rec.get("id")))
-        cfg = _llm_config()
+        cfg = llm_config()
         if cfg:
             payload["chat_model"] = f"DeepSeek {cfg['model']}"
         else:
@@ -780,43 +303,52 @@ class TrainSession:
         return self.card()
 
     def chat(self, recording_id: str, message: str, notes: str | None = None) -> dict[str, Any]:
+        for _ in self.chat_events(recording_id, message, notes):
+            pass
         if not self.queue or self.queue[0].get("id") != recording_id:
             return {"error": "stale card; reload", "labeled": self.labeled, "left": len(self.queue)}
-        rec = self.queue[0]
-        info = self._enrich(rec)
-        folders = ", ".join(f["name"] for f in folder_buttons(self._folders))
-        body = (info.get("body") or "")[:2500]
-        trans = (info.get("transcript") or "")[:2500]
-        system = (
-            "You help Daniel file one Plaud recording. You cannot file, trash, or skip. "
-            "A person is not a folder — use who / where / when. "
-            f"Folders: {folders}. "
-            "Reply in a few short sentences. Suggest one folder and a trainer note he could type. "
-            "Do not invent tenants from a clock title."
-        )
-        user = (
-            f"Title: {rec.get('title')}\n"
-            f"When: {rec.get('when')} ({info.get('hour')}:00), {rec.get('mins')} min\n"
-            f"Notes: {notes or '(none)'}\n"
-            f"Summary:\n{body}\n"
-        )
-        if trans:
-            user += f"\nTranscript excerpt:\n{trans}\n"
-        user += f"\nDaniel: {message.strip()}"
-        history = load_chat(recording_id)
-        append_chat(recording_id, {"role": "user", "text": message.strip()})
-        messages = [
-            {"role": "system", "content": system},
-            *[
-                {"role": "user" if m.get("role") == "user" else "assistant", "content": m.get("text") or ""}
-                for m in history[-10:]
-                if m.get("text")
-            ],
-            {"role": "user", "content": user},
-        ]
-        reply, thinking = complete_chat(messages)
-        append_chat(recording_id, {"role": "assistant", "text": reply, "thinking": thinking})
         return self.card()
+
+    def chat_events(
+        self, recording_id: str, message: str, notes: str | None = None
+    ) -> Iterator[dict[str, Any]]:
+        if not self.queue or self.queue[0].get("id") != recording_id:
+            yield {"type": "error", "text": "stale card; reload"}
+            return
+        rec = self.queue[0]
+        packed = self._filing_messages(rec, message, notes)
+        append_chat(recording_id, {"role": "user", "text": message.strip()})
+        thinking = ""
+        reply = ""
+        failed = False
+        for ev in stream_chat(packed):
+            kind = ev.get("type")
+            if kind == "thinking":
+                thinking += str(ev.get("delta") or "")
+                yield ev
+            elif kind == "text":
+                reply += str(ev.get("delta") or "")
+                yield ev
+            elif kind == "error":
+                reply = str(ev.get("text") or "Harness failed.")
+                failed = True
+                yield ev
+            elif kind == "done":
+                reply = str(ev.get("text") or reply)
+                thinking = str(ev.get("thinking") or thinking)
+        append_chat(
+            recording_id,
+            {"role": "assistant", "text": reply, "thinking": thinking},
+        )
+        if failed:
+            return
+        buttons = folder_buttons(self._folders)
+        yield {
+            "type": "done",
+            "text": reply,
+            "thinking": thinking,
+            "suggestion": parse_folder_suggestion(reply, buttons),
+        }
 
     def deepen(self, recording_id: str) -> dict[str, Any]:
         if not self.queue or self.queue[0].get("id") != recording_id:
@@ -902,10 +434,31 @@ class TrainHandler(BaseHTTPRequestHandler):
         raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self._send(code, raw, "application/json; charset=utf-8")
 
+    def _sse(self, events: Iterator[dict[str, Any]]) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            for ev in events:
+                line = "data: " + json.dumps(ev, ensure_ascii=False) + "\n\n"
+                self.wfile.write(line.encode("utf-8"))
+                self.wfile.flush()
+        except BrokenPipeError:
+            return
+
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         if path in ("/", "/index.html"):
-            self._send(200, PAGE.encode("utf-8"), "text/html; charset=utf-8")
+            self._send(200, static_bytes("train.html"), MIME[".html"])
+            return
+        if path in ("/train.css", "/train.js"):
+            name = path.lstrip("/")
+            ext = Path(name).suffix
+            try:
+                self._send(200, static_bytes(name), MIME[ext])
+            except FileNotFoundError:
+                self._send(404, b"not found", "text/plain")
             return
         if path == "/api/card":
             try:
@@ -936,6 +489,14 @@ class TrainHandler(BaseHTTPRequestHandler):
             sess = _session()
             if path == "/api/skip":
                 self._json(200, sess.skip(notes=payload.get("notes")))
+                return
+            if path == "/api/chat/stream":
+                rid = payload.get("recording_id")
+                msg = payload.get("message")
+                if not rid or not msg:
+                    self._json(400, {"error": "recording_id and message required"})
+                    return
+                self._sse(sess.chat_events(str(rid), str(msg), notes=payload.get("notes")))
                 return
             if path == "/api/chat":
                 rid = payload.get("recording_id")
@@ -977,6 +538,8 @@ class TrainHandler(BaseHTTPRequestHandler):
 
 
 def serve(host: str = "127.0.0.1", port: int = 7843, *, open_browser: bool = True) -> int:
+    import webbrowser
+
     try:
         ensure_session()
     except AuthError as exc:
@@ -985,7 +548,7 @@ def serve(host: str = "127.0.0.1", port: int = 7843, *, open_browser: bool = Tru
     httpd = ThreadingHTTPServer((host, port), TrainHandler)
     url = f"http://{host}:{port}/"
     print(f"plus train: {url}", file=sys.stderr)
-    print("Y agree · S skip · D deeper · T trash (twice). Folder keys 1–5.", file=sys.stderr)
+    print("Filing harness · Y agree · S skip · D deeper · T trash (twice).", file=sys.stderr)
     if open_browser:
         webbrowser.open(url)
     try:

@@ -10,3 +10,4 @@ Write-capable Plaud MCP for agents. Official `@plaud-ai/mcp` is read-only.
 - Tests: `uv run pytest` (offline). Live doctor: `plaud-plus doctor`.
 - Learn ledger is local UNVERIFIED observations, not lessons.md CONFIRMED.
 - Filing model: people/place/time then lift. `plaud-plus train` is the HITL UI. Never auto-apply.
+- Train chat is a local DeepSeek filing harness (no tools, cannot file). Not DSH.

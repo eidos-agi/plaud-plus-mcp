@@ -125,9 +125,10 @@ One card at a time. Click a folder (or **Y** if the guess is right). **S**
 skips. **D** dives into the transcript. **T** twice sends to Plaud trash
 (reversible). A folder click files and refits. Type a note on the card (who / where / what) before you file — it trains
 with the label. Shortcuts are off while the note box is focused.
-Each card has a **DeepSeek chat** against `api.deepseek.com` (`DEEPSEEK_API_KEY`,
-or macOS keychain `plaud-plus` / `deepseek`). Default model `deepseek-v4-flash`
-with thinking shown. Not OpenRouter, not a coding agent. It cannot file.
+Two panes: the recording on the left, a **filing harness** on the right.
+The harness is ours — `api.deepseek.com` (`DEEPSEEK_API_KEY` or keychain
+`plaud-plus` / `deepseek`), streaming thinking, no tools. Default model
+`deepseek-v4-flash`. Not OpenRouter, not a coding agent. It cannot file.
 Chats persist under `PlaudPlus/chats/`.
 
 Never auto-files.
