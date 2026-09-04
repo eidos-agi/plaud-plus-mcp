@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.3 — 2026-09-04
+
+- Train UI: DeepSeek chat on each card (OpenRouter v4-flash or DEEPSEEK_API_KEY).
+  Per-recording history. It cannot file.
+
 ## 0.5.2 — 2026-09-04
 
 - Train UI notes field. Typed notes store with the label (and trash/skip) and

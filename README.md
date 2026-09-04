@@ -125,6 +125,8 @@ One card at a time. Click a folder (or **Y** if the guess is right). **S**
 skips. **D** dives into the transcript. **T** twice sends to Plaud trash
 (reversible). A folder click files and refits. Type a note on the card (who / where / what) before you file — it trains
 with the label. Shortcuts are off while the note box is focused.
+Each card has a **DeepSeek chat** (OpenRouter v4-flash, or `DEEPSEEK_API_KEY`).
+It cannot file.
 
 Never auto-files.
 

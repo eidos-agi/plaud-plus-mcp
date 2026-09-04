@@ -6,13 +6,17 @@ Local only. Never files without a click. Not lessons.md CONFIRMED.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
+import urllib.error
+import urllib.request
 import webbrowser
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from .auth import AuthError, ensure_session
 from .learn import (
@@ -125,6 +129,48 @@ PAGE = """<!DOCTYPE html>
   }
   .note:focus { outline: 2px solid var(--ink); outline-offset: -2px; }
   .note::placeholder { color: #9a855c; }
+  .chat {
+    margin: 0 0 18px;
+    border: 1px solid var(--rule);
+    background: #efe6d0;
+  }
+  .chat h2 {
+    margin: 0;
+    padding: 8px 12px;
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--mute);
+    font-weight: 600;
+    border-bottom: 1px solid var(--rule);
+  }
+  .chatlog {
+    max-height: 14em;
+    overflow: auto;
+    padding: 10px 12px;
+    font-size: 15px;
+    line-height: 1.4;
+  }
+  .chatlog .who { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--mute); margin: 8px 0 2px; }
+  .chatlog .who:first-child { margin-top: 0; }
+  .chatrow { white-space: pre-wrap; }
+  .chatform { display: flex; gap: 8px; padding: 8px; border-top: 1px solid var(--rule); }
+  .chatform input {
+    flex: 1;
+    font-family: inherit;
+    font-size: 15px;
+    padding: 8px 10px;
+    border: 0;
+    background: var(--paper);
+    color: var(--ink);
+  }
+  .chatform button {
+    border-left: 0;
+    background: var(--ink);
+    color: var(--paper);
+    font-size: 15px;
+    padding: 8px 12px;
+  }
   .folders { display: flex; flex-direction: column; gap: 8px; }
   button {
     font-family: inherit;
@@ -226,6 +272,10 @@ function draw() {
   html += '<p class="blurb" id="blurb"></p>';
   html += '<p class="guess"></p>';
   html += '<textarea class="note" id="note" placeholder="Who was there, where, what this actually is…"></textarea>';
+  html += '<div class="chat"><h2>DeepSeek on this recording</h2>';
+  html += '<div class="chatlog" id="chatlog"></div>';
+  html += '<form class="chatform" id="chatform"><input id="chatq" autocomplete="off" placeholder="Ask — it cannot file"/>';
+  html += '<button type="submit">Ask</button></form></div>';
   html += '<div class="folders" id="folders"></div>';
   html += '<div class="more">';
   html += '<button class="skip" id="skip">Skip <kbd>S</kbd></button>';
@@ -278,6 +328,19 @@ function draw() {
   const note = el.querySelector("#note");
   note.value = notesById[rec.id] || "";
   note.addEventListener("input", () => { notesById[rec.id] = note.value; });
+  const log = el.querySelector("#chatlog");
+  (card.chat || []).forEach(m => {
+    const w = document.createElement("div");
+    w.className = "who";
+    w.textContent = m.role === "user" ? "You" : "DeepSeek";
+    const t = document.createElement("div");
+    t.className = "chatrow";
+    t.textContent = m.text;
+    log.appendChild(w);
+    log.appendChild(t);
+  });
+  log.scrollTop = log.scrollHeight;
+  el.querySelector("#chatform").onsubmit = (ev) => { ev.preventDefault(); ask(); };
   el.querySelector("#skip").onclick = () => skip();
   el.querySelector("#deep").onclick = () => deepen();
   const trashBtn = el.querySelector("#trash");
@@ -288,6 +351,21 @@ function noteText() {
   const v = t ? t.value : (card && card.recording ? notesById[card.recording.id] : "") || "";
   if (card && card.recording) notesById[card.recording.id] = v;
   return v.trim();
+}
+async function ask() {
+  const q = document.getElementById("chatq");
+  const text = (q && q.value || "").trim();
+  if (!text) return;
+  q.value = "";
+  const r = await fetch("/api/chat", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ recording_id: card.recording.id, message: text, notes: noteText() }),
+  });
+  card = await r.json();
+  draw();
+  const again = document.getElementById("chatq");
+  if (again) again.focus();
 }
 let trashArmed = false;
 function trashClick(btn) {
@@ -365,6 +443,72 @@ load();
 """
 
 
+def _llm_config() -> dict[str, str] | None:
+    """OpenRouter (lab DSH) or DeepSeek official. Never logs the key."""
+    ds = os.environ.get("DEEPSEEK_API_KEY")
+    if ds:
+        return {
+            "url": "https://api.deepseek.com/v1/chat/completions",
+            "model": os.environ.get("PLAUD_PLUS_LLM_MODEL") or "deepseek-chat",
+            "key": ds,
+            "name": "DeepSeek",
+        }
+    or_key = os.environ.get("OPENROUTER_API_KEY")
+    dsh = os.environ.get("DSH_HOME")
+    cred_path = Path(dsh) / ".credentials.yaml" if dsh else None
+    if cred_path is None or not cred_path.is_file():
+        lab = Path.home() / "repos-eidos-agi/eidos-harness-labs/.dsh-home/.credentials.yaml"
+        if lab.is_file():
+            cred_path = lab
+    if not or_key and cred_path and cred_path.is_file():
+        for line in cred_path.read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("OPENROUTER_API_KEY:"):
+                or_key = line.split(":", 1)[1].strip().strip("\"'")
+                break
+    if or_key:
+        return {
+            "url": "https://openrouter.ai/api/v1/chat/completions",
+            "model": os.environ.get("PLAUD_PLUS_LLM_MODEL") or "deepseek/deepseek-v4-flash",
+            "key": or_key,
+            "name": "DeepSeek",
+        }
+    return None
+
+
+def complete_chat(messages: list[dict[str, str]]) -> str:
+    cfg = _llm_config()
+    if not cfg:
+        return "No DeepSeek key. Set DEEPSEEK_API_KEY or OPENROUTER_API_KEY (lab DSH credentials work)."
+    payload = json.dumps(
+        {"model": cfg["model"], "messages": messages, "temperature": 0.2, "max_tokens": 1600}
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        cfg["url"],
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {cfg['key']}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "http://127.0.0.1:7843/",
+            "X-Title": "plaud-plus-train",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        err = exc.read().decode("utf-8", errors="replace")[:300]
+        return f"DeepSeek HTTP {exc.code}: {err}"
+    except Exception as exc:
+        return f"DeepSeek failed: {exc}"
+    try:
+        msg = data["choices"][0]["message"]
+        text = msg.get("content") or msg.get("reasoning") or ""
+        return str(text).strip() or "DeepSeek returned an empty reply."
+    except (KeyError, IndexError, TypeError):
+        return "DeepSeek returned an empty reply."
+
+
 def folder_buttons(folders: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out = []
     for folder in folders:
@@ -408,6 +552,7 @@ class TrainSession:
         self.labeled = 0
         self.trashed = 0
         self._cache: dict[str, Any] = {}
+        self._chats: dict[str, list[dict[str, str]]] = {}
         self._folders: list[dict[str, Any]] = []
         self._refresh_meta()
         self._refresh_queue()
@@ -516,6 +661,8 @@ class TrainSession:
         if trans:
             payload["deep_text"] = combined[:8000]
             payload["deep"] = True
+        payload["chat"] = list(self._chats.get(str(rec.get("id")), []))
+        payload["chat_model"] = (_llm_config() or {}).get("name") or "DeepSeek"
         return payload
 
     def _keep_note(
@@ -546,6 +693,50 @@ class TrainSession:
             self._keep_note(rec, notes, action="skip")
             self.queue.pop(0)
         self._cache = {}
+        return self.card()
+
+    def chat(self, recording_id: str, message: str, notes: str | None = None) -> dict[str, Any]:
+        if not self.queue or self.queue[0].get("id") != recording_id:
+            return {"error": "stale card; reload", "labeled": self.labeled, "left": len(self.queue)}
+        rec = self.queue[0]
+        info = self._enrich(rec)
+        folders = ", ".join(f["name"] for f in folder_buttons(self._folders))
+        body = (info.get("body") or "")[:2500]
+        trans = (info.get("transcript") or "")[:2500]
+        system = (
+            "You help Daniel file one Plaud recording. You cannot file, trash, or skip. "
+            "A person is not a folder — use who / where / when. "
+            f"Folders: {folders}. "
+            "Reply in a few short sentences. Suggest one folder and a trainer note he could type. "
+            "Do not invent tenants from a clock title."
+        )
+        user = (
+            f"Title: {rec.get('title')}\n"
+            f"When: {rec.get('when')} ({info.get('hour')}:00), {rec.get('mins')} min\n"
+            f"Notes: {notes or '(none)'}\n"
+            f"Summary:\n{body}\n"
+        )
+        if trans:
+            user += f"\nTranscript excerpt:\n{trans}\n"
+        user += f"\nDaniel: {message.strip()}"
+        history = self._chats.setdefault(recording_id, [])
+        history.append({"role": "user", "text": message.strip()})
+        messages = [{"role": "system", "content": system}]
+        for item in history[-12:]:
+            role = "assistant" if item["role"] != "user" else "user"
+            messages.append({"role": role, "content": item["text"]})
+        # last user message already in history; complete_chat uses messages
+        # Rebuild so the last is the full context user blob once:
+        messages = [
+            {"role": "system", "content": system},
+            *[
+                {"role": "user" if m["role"] == "user" else "assistant", "content": m["text"]}
+                for m in history[:-1][-10:]
+            ],
+            {"role": "user", "content": user},
+        ]
+        reply = complete_chat(messages)
+        history.append({"role": "assistant", "text": reply})
         return self.card()
 
     def deepen(self, recording_id: str) -> dict[str, Any]:
@@ -638,6 +829,12 @@ class TrainHandler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._json(500, {"error": str(exc)})
             return
+        if path == "/api/chat":
+            qs = parse_qs(urlparse(self.path).query)
+            rid = (qs.get("recording_id") or [None])[0]
+            hist = _session()._chats.get(str(rid), []) if rid else []
+            self._json(200, {"chat": hist})
+            return
         self._send(404, b"not found", "text/plain")
 
     def do_POST(self) -> None:  # noqa: N802
@@ -653,6 +850,14 @@ class TrainHandler(BaseHTTPRequestHandler):
             sess = _session()
             if path == "/api/skip":
                 self._json(200, sess.skip(notes=payload.get("notes")))
+                return
+            if path == "/api/chat":
+                rid = payload.get("recording_id")
+                msg = payload.get("message")
+                if not rid or not msg:
+                    self._json(400, {"error": "recording_id and message required"})
+                    return
+                self._json(200, sess.chat(str(rid), str(msg), notes=payload.get("notes")))
                 return
             if path == "/api/deepen":
                 rid = payload.get("recording_id")

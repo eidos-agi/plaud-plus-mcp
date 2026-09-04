@@ -43,3 +43,5 @@ def test_page_has_yes_and_skip_keys() -> None:
     assert "Trash" in PAGE
     assert 'id="note"' in PAGE
     assert "TEXTAREA" in PAGE
+    assert "/api/chat" in PAGE
+    assert "DeepSeek" in PAGE
