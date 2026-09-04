@@ -36,4 +36,8 @@ def test_page_has_yes_and_skip_keys() -> None:
     assert 'e.key === "s"' in PAGE
     assert "/api/label" in PAGE
     assert "/api/skip" in PAGE
+    assert "/api/deepen" in PAGE
+    assert "/api/trash" in PAGE
     assert "body_preview" in PAGE or "blurb" in PAGE
+    assert "Dive deeper" in PAGE
+    assert "Trash" in PAGE

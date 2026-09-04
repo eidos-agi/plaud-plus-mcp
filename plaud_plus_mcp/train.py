@@ -125,8 +125,14 @@ PAGE = """<!DOCTYPE html>
     padding: 16px 16px;
   }
   button:disabled { opacity: 0.4; cursor: wait; }
-  .skip {
+  .more {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
     margin-top: 16px;
+    align-items: center;
+  }
+  .skip, .deep, .trash {
     background: none;
     border: 0;
     color: var(--mute);
@@ -135,6 +141,16 @@ PAGE = """<!DOCTYPE html>
     text-decoration: underline;
     cursor: pointer;
     font-family: inherit;
+  }
+  .trash { color: #8a2f1f; }
+  .trash.armed { color: #c0392b; font-weight: 600; text-decoration: none; }
+  .blurb.deep {
+    max-height: 22em;
+    overflow: auto;
+    white-space: pre-wrap;
+    font-size: 14px;
+    border-top: 1px solid var(--rule);
+    padding-top: 12px;
   }
   .empty { color: var(--paper); padding: 40px 8px; }
   .err { color: #ffb4a2; margin: 12px 0; }
@@ -165,9 +181,10 @@ async function load() {
   draw();
 }
 function draw() {
+  trashArmed = false;
   const el = document.getElementById("root");
   const st = document.getElementById("stats");
-  st.textContent = (card.labeled ?? 0) + " labeled · " + (card.left ?? 0) + " left";
+  st.textContent = (card.labeled ?? 0) + " labeled · " + (card.trashed ?? 0) + " trash · " + (card.left ?? 0) + " left";
   if (card.error) {
     el.innerHTML = '<p class="err"></p>';
     el.querySelector(".err").textContent = card.error;
@@ -189,8 +206,11 @@ function draw() {
   html += '<p class="blurb" id="blurb"></p>';
   html += '<p class="guess"></p>';
   html += '<div class="folders" id="folders"></div>';
+  html += '<div class="more">';
   html += '<button class="skip" id="skip">Skip <kbd>S</kbd></button>';
-  html += "</div>";
+  html += '<button class="deep" id="deep">Dive deeper <kbd>D</kbd></button>';
+  html += '<button class="trash" id="trash">Trash <kbd>T</kbd></button>';
+  html += "</div></div>";
   el.innerHTML = html;
   el.querySelector(".meta").textContent = rec.when + " · " + rec.mins + " min";
   el.querySelector("h1").textContent = rec.title;
@@ -208,8 +228,11 @@ function draw() {
     chips.appendChild(s);
   });
   const blurb = el.querySelector("#blurb");
-  if (card.body_preview) blurb.textContent = card.body_preview;
-  else blurb.remove();
+  const preview = card.deep_text || card.body_preview;
+  if (preview) {
+    blurb.textContent = preview;
+    if (card.deep_text) blurb.classList.add("deep");
+  } else blurb.remove();
   const g = el.querySelector(".guess");
   if (guess) {
     const why = (guess.why || []).slice(0, 4).map(w => w.term).join(", ");
@@ -232,6 +255,23 @@ function draw() {
     box.appendChild(b);
   });
   el.querySelector("#skip").onclick = () => skip();
+  el.querySelector("#deep").onclick = () => deepen();
+  const trashBtn = el.querySelector("#trash");
+  trashBtn.onclick = () => trashClick(trashBtn);
+}
+let trashArmed = false;
+function trashClick(btn) {
+  if (!trashArmed) {
+    trashArmed = true;
+    btn.classList.add("armed");
+    btn.textContent = "Trash for real?";
+    const k = document.createElement("kbd");
+    k.textContent = "T";
+    btn.appendChild(k);
+    return;
+  }
+  trashArmed = false;
+  trash();
 }
 async function label(folderId, btn) {
   document.querySelectorAll("button").forEach(b => b.disabled = true);
@@ -244,13 +284,39 @@ async function label(folderId, btn) {
   draw();
 }
 async function skip() {
+  trashArmed = false;
   const r = await fetch("/api/skip", { method: "POST" });
+  card = await r.json();
+  draw();
+}
+async function deepen() {
+  const r = await fetch("/api/deepen", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ recording_id: card.recording.id }),
+  });
+  card = await r.json();
+  draw();
+}
+async function trash() {
+  document.querySelectorAll("button").forEach(b => b.disabled = true);
+  const r = await fetch("/api/trash", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ recording_id: card.recording.id }),
+  });
   card = await r.json();
   draw();
 }
 document.addEventListener("keydown", (e) => {
   if (e.target.tagName === "INPUT" || !card || !card.recording) return;
   if (e.key === "s" || e.key === "S") { skip(); return; }
+  if (e.key === "d" || e.key === "D") { deepen(); return; }
+  if (e.key === "t" || e.key === "T") {
+    const btn = document.getElementById("trash");
+    if (btn) trashClick(btn);
+    return;
+  }
   if ((e.key === "y" || e.key === "Y") && card.guess && card.guess.folders && card.guess.folders[0]) {
     label(card.guess.folders[0].folder_id);
     return;
@@ -306,6 +372,8 @@ class TrainSession:
         self.client = PlaudClient(SessionManager(SessionStore()))
         self.queue: list[dict[str, Any]] = []
         self.labeled = 0
+        self.trashed = 0
+        self._cache: dict[str, Any] = {}
         self._folders: list[dict[str, Any]] = []
         self._refresh_meta()
         self._refresh_queue()
@@ -344,8 +412,16 @@ class TrainSession:
             summary["mins"] = summary.get("duration_minutes") or 0
             self.queue.append(summary)
 
-    def _enrich(self, rec: dict[str, Any]) -> tuple[str | None, str | None, int | None]:
-        detail = self.client.get_recording(rec["id"], include_summary=True)
+    def _enrich(self, rec: dict[str, Any], *, transcript: bool = False) -> dict[str, Any]:
+        rid = rec["id"]
+        cached = self._cache if self._cache.get("id") == rid else {}
+        if cached.get("ready") and (not transcript or cached.get("deep")):
+            return cached
+        detail = self.client.get_recording(
+            rid,
+            include_summary=True,
+            include_transcript=transcript,
+        )
         extra = detail.extra_data or {}
         headline = (extra.get("aiContentHeader") or {}).get("headline")
         body = detail.ai_content if isinstance(detail.ai_content, str) else None
@@ -356,26 +432,77 @@ class TrainSession:
         if isinstance(start, (int, float)) and start > 0:
             ts = start / 1000 if start > 10_000_000_000 else start
             hour = datetime.fromtimestamp(ts).hour
-        return body, headline, hour
+        speakers = list(getattr(detail, "speakers", None) or [])
+        trans = getattr(detail, "transcript", None) if transcript else cached.get("transcript")
+        if isinstance(trans, str) and len(trans) > 12000:
+            trans = trans[:12000] + "\n…"
+        out = {
+            "id": rid,
+            "ready": True,
+            "deep": bool(transcript) or bool(cached.get("deep")),
+            "body": body,
+            "headline": headline,
+            "hour": hour,
+            "speakers": speakers,
+            "transcript": trans if isinstance(trans, str) else cached.get("transcript"),
+        }
+        self._cache = out
+        return out
 
     def card(self) -> dict[str, Any]:
         buttons = folder_buttons(self._folders)
-        base = {"folders": buttons, "labeled": self.labeled, "left": len(self.queue)}
+        base = {
+            "folders": buttons,
+            "labeled": self.labeled,
+            "trashed": self.trashed,
+            "left": len(self.queue),
+        }
         if not self.queue:
             return {**base, "done": True}
         rec = self.queue[0]
         try:
-            body, headline, hour = self._enrich(rec)
+            info = self._enrich(rec)
         except Exception as exc:
             return {**base, "error": str(exc), "recording": recording_view(rec, None, rec.get("hour"))}
-        guess = suggest(title=rec.get("title"), body=body, recording_id=rec.get("id"), hour=hour)
-        view = recording_view(rec, body, hour)
-        view["headline"] = headline
-        return {**base, "done": False, "recording": view, "guess": guess, "body_preview": (body or "")[:400]}
+        body = info.get("body")
+        trans = info.get("transcript")
+        combined = "\n\n".join(p for p in (body, trans) if p)
+        hour = info.get("hour")
+        guess = suggest(title=rec.get("title"), body=combined or body, recording_id=rec.get("id"), hour=hour)
+        view = recording_view(rec, combined or body, hour)
+        view["headline"] = info.get("headline")
+        view["speakers"] = info.get("speakers") or []
+        payload = {
+            **base,
+            "done": False,
+            "recording": view,
+            "guess": guess,
+            "body_preview": (body or "")[:400],
+        }
+        if trans:
+            payload["deep_text"] = combined[:8000]
+            payload["deep"] = True
+        return payload
 
     def skip(self) -> dict[str, Any]:
         if self.queue:
             self.queue.pop(0)
+        self._cache = {}
+        return self.card()
+
+    def deepen(self, recording_id: str) -> dict[str, Any]:
+        if not self.queue or self.queue[0].get("id") != recording_id:
+            return {"error": "stale card; reload", "labeled": self.labeled, "left": len(self.queue)}
+        self._enrich(self.queue[0], transcript=True)
+        return self.card()
+
+    def trash(self, recording_id: str) -> dict[str, Any]:
+        if not self.queue or self.queue[0].get("id") != recording_id:
+            return {"error": "stale card; reload", "labeled": self.labeled, "left": len(self.queue)}
+        self.client.move_to_trash(recording_id)
+        self.queue.pop(0)
+        self.trashed += 1
+        self._cache = {}
         return self.card()
 
     def label(self, recording_id: str, folder_id: str) -> dict[str, Any]:
@@ -385,7 +512,7 @@ class TrainSession:
         if not self.queue or self.queue[0].get("id") != recording_id:
             return {"error": "stale card; reload", "labeled": self.labeled, "left": len(self.queue)}
         rec = self.queue[0]
-        body, headline, hour = self._enrich(rec)
+        info = self._enrich(rec)
         self.client.set_recording_folder(recording_id, folder_id)
         snapshot_filings(
             [
@@ -393,15 +520,16 @@ class TrainSession:
                     "id": recording_id,
                     "folder_id": folder_id,
                     "title": rec.get("title"),
-                    "headline": headline,
-                    "body": body,
-                    "hour": hour,
+                    "headline": info.get("headline"),
+                    "body": "\n\n".join(p for p in (info.get("body"), info.get("transcript")) if p),
+                    "hour": info.get("hour"),
                 }
             ]
         )
         fit()
         self.queue.pop(0)
         self.labeled += 1
+        self._cache = {}
         return self.card()
 
 
@@ -462,6 +590,20 @@ class TrainHandler(BaseHTTPRequestHandler):
             if path == "/api/skip":
                 self._json(200, sess.skip())
                 return
+            if path == "/api/deepen":
+                rid = payload.get("recording_id")
+                if not rid:
+                    self._json(400, {"error": "recording_id required"})
+                    return
+                self._json(200, sess.deepen(str(rid)))
+                return
+            if path == "/api/trash":
+                rid = payload.get("recording_id")
+                if not rid:
+                    self._json(400, {"error": "recording_id required"})
+                    return
+                self._json(200, sess.trash(str(rid)))
+                return
             if path == "/api/label":
                 rid = payload.get("recording_id")
                 fid = payload.get("folder_id")
@@ -488,7 +630,7 @@ def serve(host: str = "127.0.0.1", port: int = 7843, *, open_browser: bool = Tru
     httpd = ThreadingHTTPServer((host, port), TrainHandler)
     url = f"http://{host}:{port}/"
     print(f"plus train: {url}", file=sys.stderr)
-    print("Click a folder to file and refit. Y = agree with the guess. S = skip.", file=sys.stderr)
+    print("Y agree · S skip · D deeper · T trash (twice). Folder keys 1–5.", file=sys.stderr)
     if open_browser:
         webbrowser.open(url)
     try:

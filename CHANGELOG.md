@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.1 — 2026-09-04
+
+- Train UI: **Dive deeper** (D) pulls the transcript and re-scores people/place.
+- Train UI: **Trash** (T, twice) sends to Plaud trash — reversible, not delete.
+
 ## 0.5.0 — 2026-09-04
 
 - `plaud-plus train` — local HITL page. One unfiled recording, you pick the

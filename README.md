@@ -121,9 +121,9 @@ plaud-plus train          # http://127.0.0.1:7843/
 plaud-plus train --no-open --port 7843
 ```
 
-One card at a time. Click a folder (or **Y** if the guess is right, **S** to
-skip). That click files the recording in Plaud and refits the local model.
-Never auto-files.
+One card at a time. Click a folder (or **Y** if the guess is right). **S**
+skips. **D** dives into the transcript. **T** twice sends to Plaud trash
+(reversible). A folder click files and refits. Never auto-files.
 
 ## License
 
