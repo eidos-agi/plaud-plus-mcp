@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0 — 2026-09-04
+
+- `plaud-plus train` — local HITL page. One unfiled recording, you pick the
+  folder, it files and refits. Y agrees with the guess. S skips. Probe folders
+  are not buttons.
+
 ## 0.4.0 — 2026-09-03
 
 - Filing score is people, place, and time-of-day first. A name is not a folder:

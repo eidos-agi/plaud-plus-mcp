@@ -117,6 +117,17 @@ def _filed_docs_with_summaries() -> tuple[list[dict], list[dict]]:
     return folders, docs
 
 
+def cmd_train(args: argparse.Namespace) -> int:
+    from .train import serve
+
+    try:
+        ensure_session()
+    except AuthError as exc:
+        print(f"plaud-plus: {exc}", file=sys.stderr)
+        return 2
+    return serve(host=args.host, port=args.port, open_browser=not args.no_open)
+
+
 def cmd_learn(args: argparse.Namespace) -> int:
     action = args.action or "status"
     if action == "status":
@@ -239,7 +250,7 @@ def cmd_learn(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    ours = {"login", "doctor", "learn", "-h", "--help", "--version"}
+    ours = {"login", "doctor", "learn", "train", "-h", "--help", "--version"}
     if not argv or argv[0] in ours:
         parser = argparse.ArgumentParser(
             prog="plaud-plus",
@@ -274,6 +285,12 @@ def main(argv: list[str] | None = None) -> int:
         learn.add_argument("--kind")
         learn.add_argument("--limit", type=int, default=20)
         learn.set_defaults(func=cmd_learn)
+
+        train = sub.add_parser("train", help="Local HITL UI to file recordings and refit the model")
+        train.add_argument("--port", type=int, default=7843)
+        train.add_argument("--host", default="127.0.0.1")
+        train.add_argument("--no-open", action="store_true")
+        train.set_defaults(func=cmd_train)
 
         args = parser.parse_args(argv)
         if not args.cmd:

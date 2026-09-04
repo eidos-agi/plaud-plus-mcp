@@ -42,7 +42,8 @@ plaud-plus doctor
 Before filing, `plaud_plus_learn(action="suggest", title=..., recording_id=...)`.
 The scorer looks at **who** (with context — Clayton is not a folder),
 **where**, and **when**, then lift/n-grams. Product-noun rules are a
-tie-break only. Never apply a guess without asking.
+tie-break only. Never apply a guess without asking. Human training UI: `plaud-plus train`
+(http://127.0.0.1:7843/). Y = agree, S = skip, number keys = folders.
 
 ## Failure modes
 

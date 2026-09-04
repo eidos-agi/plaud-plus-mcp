@@ -114,6 +114,17 @@ guess unless a summary is passed. `suggest --recording-id` reads the Plaud
 summary. `learn cv` is leave-one-out accuracy. `learn rank` scores unfiled
 titles. `do_not_apply: true` always. Ask the human, then `mutate_recording`.
 
+## Train (HITL)
+
+```bash
+plaud-plus train          # http://127.0.0.1:7843/
+plaud-plus train --no-open --port 7843
+```
+
+One card at a time. Click a folder (or **Y** if the guess is right, **S** to
+skip). That click files the recording in Plaud and refits the local model.
+Never auto-files.
+
 ## License
 
 MIT for this repo. Runtime depends on plaud-tools (LGPL-3.0-or-later) — see

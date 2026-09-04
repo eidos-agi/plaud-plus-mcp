@@ -24,6 +24,12 @@ def test_passthrough_to_plaud_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     assert called == [["plaud-tools", "folders"]]
 
 
+def test_train_help_exits_zero() -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(["train", "--help"])
+    assert exc.value.code == 0
+
+
 def test_learn_status_json(tmp_path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.setenv("PLAUD_PLUS_LEARN", str(tmp_path / "learn.jsonl"))
     assert main(["learn", "status"]) == 0
