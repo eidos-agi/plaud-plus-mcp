@@ -44,6 +44,7 @@ The scorer looks at **who** (with context — Clayton is not a folder),
 **where**, and **when**, then lift/n-grams. Product-noun rules are a
 tie-break only. Never apply a guess without asking. Human training UI: `plaud-plus train`
 (http://127.0.0.1:7843/). Y = agree, S = skip, D = transcript, T twice = trash.
+In-card chat is official DeepSeek (`DEEPSEEK_API_KEY` / keychain), not a coding agent.
 
 ## Failure modes
 

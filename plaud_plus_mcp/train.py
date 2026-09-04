@@ -289,7 +289,7 @@ function draw() {
   html += '<p class="blurb" id="blurb"></p>';
   html += '<p class="guess"></p>';
   html += '<textarea class="note" id="note" placeholder="Who was there, where, what this actually is…"></textarea>';
-  html += '<div class="chat"><h2>DeepSeek on this recording</h2>';
+  html += '<div class="chat"><h2></h2>';
   html += '<div class="chatlog" id="chatlog"></div>';
   html += '<form class="chatform" id="chatform"><input id="chatq" autocomplete="off" placeholder="Ask — it cannot file"/>';
   html += '<button type="submit">Ask</button></form></div>';
@@ -302,6 +302,7 @@ function draw() {
   el.innerHTML = html;
   el.querySelector(".meta").textContent = rec.when + " · " + rec.mins + " min";
   el.querySelector("h1").textContent = rec.title;
+  el.querySelector(".chat h2").textContent = (card.chat_model || "DeepSeek") + " on this recording";
   const chips = el.querySelector("#chips");
   (rec.people || []).forEach(p => {
     const s = document.createElement("span");
@@ -474,36 +475,36 @@ load();
 """
 
 
+DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
+DEEPSEEK_MODEL = "deepseek-v4-flash"
+KR_LLM_ACCOUNT = "deepseek"
+
+
+def _deepseek_key() -> str | None:
+    """Official DeepSeek key only. Never OpenRouter, never DSH, never logs the secret."""
+    env = (os.environ.get("DEEPSEEK_API_KEY") or "").strip()
+    if env:
+        return env
+    try:
+        import keyring
+
+        stored = keyring.get_password("plaud-plus", KR_LLM_ACCOUNT)
+    except Exception:
+        return None
+    stored = (stored or "").strip()
+    return stored or None
+
+
 def _llm_config() -> dict[str, str] | None:
-    """OpenRouter (lab DSH) or DeepSeek official. Never logs the key."""
-    ds = os.environ.get("DEEPSEEK_API_KEY")
-    if ds:
-        return {
-            "url": "https://api.deepseek.com/v1/chat/completions",
-            "model": os.environ.get("PLAUD_PLUS_LLM_MODEL") or "deepseek-chat",
-            "key": ds,
-            "name": "DeepSeek",
-        }
-    or_key = os.environ.get("OPENROUTER_API_KEY")
-    dsh = os.environ.get("DSH_HOME")
-    cred_path = Path(dsh) / ".credentials.yaml" if dsh else None
-    if cred_path is None or not cred_path.is_file():
-        lab = Path.home() / "repos-eidos-agi/eidos-harness-labs/.dsh-home/.credentials.yaml"
-        if lab.is_file():
-            cred_path = lab
-    if not or_key and cred_path and cred_path.is_file():
-        for line in cred_path.read_text(encoding="utf-8").splitlines():
-            if line.strip().startswith("OPENROUTER_API_KEY:"):
-                or_key = line.split(":", 1)[1].strip().strip("\"'")
-                break
-    if or_key:
-        return {
-            "url": "https://openrouter.ai/api/v1/chat/completions",
-            "model": os.environ.get("PLAUD_PLUS_LLM_MODEL") or "deepseek/deepseek-v4-flash",
-            "key": or_key,
-            "name": "DeepSeek",
-        }
-    return None
+    key = _deepseek_key()
+    if not key:
+        return None
+    return {
+        "url": DEEPSEEK_URL,
+        "model": os.environ.get("PLAUD_PLUS_LLM_MODEL") or DEEPSEEK_MODEL,
+        "key": key,
+        "name": "DeepSeek",
+    }
 
 
 def chats_dir() -> Path:
@@ -540,21 +541,34 @@ def append_chat(recording_id: str, message: dict[str, Any]) -> None:
         fh.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
 
 
+def parse_chat_message(data: dict[str, Any]) -> tuple[str, str]:
+    """content + reasoning_content from official DeepSeek. Never logs the key."""
+    try:
+        msg = data["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError):
+        return "DeepSeek returned an empty reply.", ""
+    text = str(msg.get("content") or "").strip()
+    thinking = str(msg.get("reasoning_content") or msg.get("reasoning") or "").strip()
+    if not text and thinking:
+        text = thinking.split("\n\n")[-1].strip()
+    return text or "DeepSeek returned an empty reply.", thinking
+
+
 def complete_chat(messages: list[dict[str, str]]) -> tuple[str, str]:
     cfg = _llm_config()
     if not cfg:
         return (
-            "No DeepSeek key. Set DEEPSEEK_API_KEY or OPENROUTER_API_KEY (lab DSH credentials work).",
+            "No DeepSeek key. Set DEEPSEEK_API_KEY or store it in the "
+            "plaud-plus keychain (account deepseek). Not OpenRouter, not a coding agent.",
             "",
         )
     body: dict[str, Any] = {
         "model": cfg["model"],
         "messages": messages,
-        "temperature": 0.2,
-        "max_tokens": 1600,
+        "max_tokens": 4096,
+        "thinking": {"type": "enabled"},
+        "reasoning_effort": "high",
     }
-    if "openrouter.ai" in cfg["url"]:
-        body["reasoning"] = {"effort": "medium"}
     payload = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
         cfg["url"],
@@ -562,28 +576,18 @@ def complete_chat(messages: list[dict[str, str]]) -> tuple[str, str]:
         headers={
             "Authorization": f"Bearer {cfg['key']}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "http://127.0.0.1:7843/",
-            "X-Title": "plaud-plus-train",
         },
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=120) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         err = exc.read().decode("utf-8", errors="replace")[:300]
         return f"DeepSeek HTTP {exc.code}: {err}", ""
     except Exception as exc:
         return f"DeepSeek failed: {exc}", ""
-    try:
-        msg = data["choices"][0]["message"]
-        text = str(msg.get("content") or "").strip()
-        thinking = str(msg.get("reasoning") or "").strip()
-        if not text and thinking:
-            text = thinking.split("\n\n")[-1].strip()
-        return text or "DeepSeek returned an empty reply.", thinking
-    except (KeyError, IndexError, TypeError):
-        return "DeepSeek returned an empty reply.", ""
+    return parse_chat_message(data)
 
 
 def folder_buttons(folders: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -738,7 +742,11 @@ class TrainSession:
             payload["deep_text"] = combined[:8000]
             payload["deep"] = True
         payload["chat"] = load_chat(str(rec.get("id")))
-        payload["chat_model"] = (_llm_config() or {}).get("name") or "DeepSeek"
+        cfg = _llm_config()
+        if cfg:
+            payload["chat_model"] = f"DeepSeek {cfg['model']}"
+        else:
+            payload["chat_model"] = "DeepSeek (no key)"
         return payload
 
     def _keep_note(

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.5 — 2026-09-04
+
+- Train chat uses the official DeepSeek API (`DEEPSEEK_API_KEY` or keychain
+  `plaud-plus`/`deepseek`). Default model `deepseek-v4-flash` with thinking.
+- No OpenRouter, no DSH harness credentials, no coding agent.
+
 ## 0.5.4 — 2026-09-04
 
 - Train chat is a durable JSONL per recording (`PlaudPlus/chats/<id>.jsonl`).
@@ -7,8 +13,7 @@
 
 ## 0.5.3 — 2026-09-04
 
-- Train UI: DeepSeek chat on each card (OpenRouter v4-flash or DEEPSEEK_API_KEY).
-  Per-recording history. It cannot file.
+- Train UI: DeepSeek chat on each card. Per-recording history. It cannot file.
 
 ## 0.5.2 — 2026-09-04
 
