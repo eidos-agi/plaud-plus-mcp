@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.2 — 2026-09-04
+
+- Train UI notes field. Typed notes store with the label (and trash/skip) and
+  feed the local model. Shortcuts ignore the textarea.
+
 ## 0.5.1 — 2026-09-04
 
 - Train UI: **Dive deeper** (D) pulls the transcript and re-scores people/place.

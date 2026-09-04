@@ -41,3 +41,5 @@ def test_page_has_yes_and_skip_keys() -> None:
     assert "body_preview" in PAGE or "blurb" in PAGE
     assert "Dive deeper" in PAGE
     assert "Trash" in PAGE
+    assert 'id="note"' in PAGE
+    assert "TEXTAREA" in PAGE

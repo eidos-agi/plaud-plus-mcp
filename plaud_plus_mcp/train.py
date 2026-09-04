@@ -20,6 +20,7 @@ from .learn import (
     extract_people,
     extract_places,
     fit,
+    remember,
     snapshot_filings,
     snapshot_folders,
     suggest,
@@ -106,6 +107,24 @@ PAGE = """<!DOCTYPE html>
     font-size: 15px;
   }
   .guess b { font-style: normal; color: var(--ink); }
+  .note {
+    display: block;
+    width: 100%;
+    min-height: 5.5em;
+    margin: 0 0 18px;
+    padding: 10px 12px;
+    border: 0;
+    border-top: 1px solid var(--rule);
+    border-bottom: 1px solid var(--rule);
+    background: #efe6d0;
+    color: var(--ink);
+    font-family: inherit;
+    font-size: 16px;
+    line-height: 1.4;
+    resize: vertical;
+  }
+  .note:focus { outline: 2px solid var(--ink); outline-offset: -2px; }
+  .note::placeholder { color: #9a855c; }
   .folders { display: flex; flex-direction: column; gap: 8px; }
   button {
     font-family: inherit;
@@ -175,6 +194,7 @@ PAGE = """<!DOCTYPE html>
   </div>
 <script>
 let card = null;
+const notesById = {};
 async function load() {
   const r = await fetch("/api/card");
   card = await r.json();
@@ -205,6 +225,7 @@ function draw() {
   html += '<div class="chips" id="chips"></div>';
   html += '<p class="blurb" id="blurb"></p>';
   html += '<p class="guess"></p>';
+  html += '<textarea class="note" id="note" placeholder="Who was there, where, what this actually is…"></textarea>';
   html += '<div class="folders" id="folders"></div>';
   html += '<div class="more">';
   html += '<button class="skip" id="skip">Skip <kbd>S</kbd></button>';
@@ -254,10 +275,19 @@ function draw() {
     b.onclick = () => label(f.id, b);
     box.appendChild(b);
   });
+  const note = el.querySelector("#note");
+  note.value = notesById[rec.id] || "";
+  note.addEventListener("input", () => { notesById[rec.id] = note.value; });
   el.querySelector("#skip").onclick = () => skip();
   el.querySelector("#deep").onclick = () => deepen();
   const trashBtn = el.querySelector("#trash");
   trashBtn.onclick = () => trashClick(trashBtn);
+}
+function noteText() {
+  const t = document.getElementById("note");
+  const v = t ? t.value : (card && card.recording ? notesById[card.recording.id] : "") || "";
+  if (card && card.recording) notesById[card.recording.id] = v;
+  return v.trim();
 }
 let trashArmed = false;
 function trashClick(btn) {
@@ -278,14 +308,18 @@ async function label(folderId, btn) {
   const r = await fetch("/api/label", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({ recording_id: card.recording.id, folder_id: folderId }),
+    body: JSON.stringify({ recording_id: card.recording.id, folder_id: folderId, notes: noteText() }),
   });
   card = await r.json();
   draw();
 }
 async function skip() {
   trashArmed = false;
-  const r = await fetch("/api/skip", { method: "POST" });
+  const r = await fetch("/api/skip", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ recording_id: card.recording && card.recording.id, notes: noteText() }),
+  });
   card = await r.json();
   draw();
 }
@@ -293,7 +327,7 @@ async function deepen() {
   const r = await fetch("/api/deepen", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({ recording_id: card.recording.id }),
+    body: JSON.stringify({ recording_id: card.recording.id, notes: noteText() }),
   });
   card = await r.json();
   draw();
@@ -303,13 +337,13 @@ async function trash() {
   const r = await fetch("/api/trash", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({ recording_id: card.recording.id }),
+    body: JSON.stringify({ recording_id: card.recording.id, notes: noteText() }),
   });
   card = await r.json();
   draw();
 }
 document.addEventListener("keydown", (e) => {
-  if (e.target.tagName === "INPUT" || !card || !card.recording) return;
+  if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || !card || !card.recording) return;
   if (e.key === "s" || e.key === "S") { skip(); return; }
   if (e.key === "d" || e.key === "D") { deepen(); return; }
   if (e.key === "t" || e.key === "T") {
@@ -484,8 +518,32 @@ class TrainSession:
             payload["deep"] = True
         return payload
 
-    def skip(self) -> dict[str, Any]:
+    def _keep_note(
+        self,
+        rec: dict[str, Any],
+        notes: str | None,
+        *,
+        folder_id: str | None = None,
+        action: str | None = None,
+    ) -> str:
+        text = (notes or "").strip()
+        if not text:
+            return ""
+        extra: dict[str, Any] = {
+            "recording_id": rec.get("id"),
+            "title": rec.get("title"),
+        }
+        if folder_id:
+            extra["folder_id"] = folder_id
+        if action:
+            extra["action"] = action
+        remember(text, extra=extra)
+        return text
+
+    def skip(self, notes: str | None = None) -> dict[str, Any]:
         if self.queue:
+            rec = self.queue[0]
+            self._keep_note(rec, notes, action="skip")
             self.queue.pop(0)
         self._cache = {}
         return self.card()
@@ -496,16 +554,18 @@ class TrainSession:
         self._enrich(self.queue[0], transcript=True)
         return self.card()
 
-    def trash(self, recording_id: str) -> dict[str, Any]:
+    def trash(self, recording_id: str, notes: str | None = None) -> dict[str, Any]:
         if not self.queue or self.queue[0].get("id") != recording_id:
             return {"error": "stale card; reload", "labeled": self.labeled, "left": len(self.queue)}
+        rec = self.queue[0]
+        self._keep_note(rec, notes, action="trash")
         self.client.move_to_trash(recording_id)
         self.queue.pop(0)
         self.trashed += 1
         self._cache = {}
         return self.card()
 
-    def label(self, recording_id: str, folder_id: str) -> dict[str, Any]:
+    def label(self, recording_id: str, folder_id: str, notes: str | None = None) -> dict[str, Any]:
         allowed = {f["id"] for f in folder_buttons(self._folders)}
         if folder_id not in allowed:
             return {"error": "unknown folder", "labeled": self.labeled, "left": len(self.queue)}
@@ -513,7 +573,11 @@ class TrainSession:
             return {"error": "stale card; reload", "labeled": self.labeled, "left": len(self.queue)}
         rec = self.queue[0]
         info = self._enrich(rec)
+        note = self._keep_note(rec, notes, folder_id=folder_id, action="label")
         self.client.set_recording_folder(recording_id, folder_id)
+        body_parts = [p for p in (info.get("body"), info.get("transcript")) if p]
+        if note:
+            body_parts.append(f"Trainer note: {note}")
         snapshot_filings(
             [
                 {
@@ -521,7 +585,7 @@ class TrainSession:
                     "folder_id": folder_id,
                     "title": rec.get("title"),
                     "headline": info.get("headline"),
-                    "body": "\n\n".join(p for p in (info.get("body"), info.get("transcript")) if p),
+                    "body": "\n\n".join(body_parts),
                     "hour": info.get("hour"),
                 }
             ]
@@ -588,7 +652,7 @@ class TrainHandler(BaseHTTPRequestHandler):
         try:
             sess = _session()
             if path == "/api/skip":
-                self._json(200, sess.skip())
+                self._json(200, sess.skip(notes=payload.get("notes")))
                 return
             if path == "/api/deepen":
                 rid = payload.get("recording_id")
@@ -602,7 +666,7 @@ class TrainHandler(BaseHTTPRequestHandler):
                 if not rid:
                     self._json(400, {"error": "recording_id required"})
                     return
-                self._json(200, sess.trash(str(rid)))
+                self._json(200, sess.trash(str(rid), notes=payload.get("notes")))
                 return
             if path == "/api/label":
                 rid = payload.get("recording_id")
@@ -610,7 +674,7 @@ class TrainHandler(BaseHTTPRequestHandler):
                 if not rid or not fid:
                     self._json(400, {"error": "recording_id and folder_id required"})
                     return
-                self._json(200, sess.label(str(rid), str(fid)))
+                self._json(200, sess.label(str(rid), str(fid), notes=payload.get("notes")))
                 return
         except AuthError as exc:
             self._json(401, {"error": str(exc)})

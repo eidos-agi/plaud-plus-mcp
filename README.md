@@ -123,7 +123,10 @@ plaud-plus train --no-open --port 7843
 
 One card at a time. Click a folder (or **Y** if the guess is right). **S**
 skips. **D** dives into the transcript. **T** twice sends to Plaud trash
-(reversible). A folder click files and refits. Never auto-files.
+(reversible). A folder click files and refits. Type a note on the card (who / where / what) before you file — it trains
+with the label. Shortcuts are off while the note box is focused.
+
+Never auto-files.
 
 ## License
 
