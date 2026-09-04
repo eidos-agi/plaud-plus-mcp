@@ -24,6 +24,7 @@ from .learn import (
     extract_people,
     extract_places,
     fit,
+    ledger_path,
     remember,
     snapshot_filings,
     snapshot_folders,
@@ -154,6 +155,22 @@ PAGE = """<!DOCTYPE html>
   .chatlog .who { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--mute); margin: 8px 0 2px; }
   .chatlog .who:first-child { margin-top: 0; }
   .chatrow { white-space: pre-wrap; }
+  .think {
+    margin: 6px 0 8px;
+    padding: 8px 10px;
+    background: #e6dcc4;
+    color: #5a4a30;
+    font-size: 13px;
+    line-height: 1.35;
+    white-space: pre-wrap;
+  }
+  .think summary {
+    cursor: pointer;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-size: 11px;
+    color: var(--mute);
+  }
   .chatform { display: flex; gap: 8px; padding: 8px; border-top: 1px solid var(--rule); }
   .chatform input {
     flex: 1;
@@ -333,11 +350,25 @@ function draw() {
     const w = document.createElement("div");
     w.className = "who";
     w.textContent = m.role === "user" ? "You" : "DeepSeek";
-    const t = document.createElement("div");
-    t.className = "chatrow";
-    t.textContent = m.text;
     log.appendChild(w);
-    log.appendChild(t);
+    if (m.thinking) {
+      const d = document.createElement("details");
+      d.className = "think";
+      d.open = true;
+      const s = document.createElement("summary");
+      s.textContent = "thinking";
+      const p = document.createElement("div");
+      p.textContent = m.thinking;
+      d.appendChild(s);
+      d.appendChild(p);
+      log.appendChild(d);
+    }
+    if (m.text) {
+      const t = document.createElement("div");
+      t.className = "chatrow";
+      t.textContent = m.text;
+      log.appendChild(t);
+    }
   });
   log.scrollTop = log.scrollHeight;
   el.querySelector("#chatform").onsubmit = (ev) => { ev.preventDefault(); ask(); };
@@ -475,13 +506,56 @@ def _llm_config() -> dict[str, str] | None:
     return None
 
 
-def complete_chat(messages: list[dict[str, str]]) -> str:
+def chats_dir() -> Path:
+    return ledger_path().parent / "chats"
+
+
+def chat_path(recording_id: str) -> Path:
+    return chats_dir() / f"{recording_id}.jsonl"
+
+
+def load_chat(recording_id: str) -> list[dict[str, str]]:
+    dest = chat_path(recording_id)
+    if not dest.is_file():
+        return []
+    rows: list[dict[str, str]] = []
+    for line in dest.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and obj.get("role"):
+            rows.append(obj)
+    return rows
+
+
+def append_chat(recording_id: str, message: dict[str, Any]) -> None:
+    dest = chat_path(recording_id)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    row = {"ts": int(datetime.now().timestamp()), **message}
+    with dest.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+
+def complete_chat(messages: list[dict[str, str]]) -> tuple[str, str]:
     cfg = _llm_config()
     if not cfg:
-        return "No DeepSeek key. Set DEEPSEEK_API_KEY or OPENROUTER_API_KEY (lab DSH credentials work)."
-    payload = json.dumps(
-        {"model": cfg["model"], "messages": messages, "temperature": 0.2, "max_tokens": 1600}
-    ).encode("utf-8")
+        return (
+            "No DeepSeek key. Set DEEPSEEK_API_KEY or OPENROUTER_API_KEY (lab DSH credentials work).",
+            "",
+        )
+    body: dict[str, Any] = {
+        "model": cfg["model"],
+        "messages": messages,
+        "temperature": 0.2,
+        "max_tokens": 1600,
+    }
+    if "openrouter.ai" in cfg["url"]:
+        body["reasoning"] = {"effort": "medium"}
+    payload = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
         cfg["url"],
         data=payload,
@@ -498,15 +572,18 @@ def complete_chat(messages: list[dict[str, str]]) -> str:
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         err = exc.read().decode("utf-8", errors="replace")[:300]
-        return f"DeepSeek HTTP {exc.code}: {err}"
+        return f"DeepSeek HTTP {exc.code}: {err}", ""
     except Exception as exc:
-        return f"DeepSeek failed: {exc}"
+        return f"DeepSeek failed: {exc}", ""
     try:
         msg = data["choices"][0]["message"]
-        text = msg.get("content") or msg.get("reasoning") or ""
-        return str(text).strip() or "DeepSeek returned an empty reply."
+        text = str(msg.get("content") or "").strip()
+        thinking = str(msg.get("reasoning") or "").strip()
+        if not text and thinking:
+            text = thinking.split("\n\n")[-1].strip()
+        return text or "DeepSeek returned an empty reply.", thinking
     except (KeyError, IndexError, TypeError):
-        return "DeepSeek returned an empty reply."
+        return "DeepSeek returned an empty reply.", ""
 
 
 def folder_buttons(folders: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -552,7 +629,6 @@ class TrainSession:
         self.labeled = 0
         self.trashed = 0
         self._cache: dict[str, Any] = {}
-        self._chats: dict[str, list[dict[str, str]]] = {}
         self._folders: list[dict[str, Any]] = []
         self._refresh_meta()
         self._refresh_queue()
@@ -661,7 +737,7 @@ class TrainSession:
         if trans:
             payload["deep_text"] = combined[:8000]
             payload["deep"] = True
-        payload["chat"] = list(self._chats.get(str(rec.get("id")), []))
+        payload["chat"] = load_chat(str(rec.get("id")))
         payload["chat_model"] = (_llm_config() or {}).get("name") or "DeepSeek"
         return payload
 
@@ -719,24 +795,19 @@ class TrainSession:
         if trans:
             user += f"\nTranscript excerpt:\n{trans}\n"
         user += f"\nDaniel: {message.strip()}"
-        history = self._chats.setdefault(recording_id, [])
-        history.append({"role": "user", "text": message.strip()})
-        messages = [{"role": "system", "content": system}]
-        for item in history[-12:]:
-            role = "assistant" if item["role"] != "user" else "user"
-            messages.append({"role": role, "content": item["text"]})
-        # last user message already in history; complete_chat uses messages
-        # Rebuild so the last is the full context user blob once:
+        history = load_chat(recording_id)
+        append_chat(recording_id, {"role": "user", "text": message.strip()})
         messages = [
             {"role": "system", "content": system},
             *[
-                {"role": "user" if m["role"] == "user" else "assistant", "content": m["text"]}
-                for m in history[:-1][-10:]
+                {"role": "user" if m.get("role") == "user" else "assistant", "content": m.get("text") or ""}
+                for m in history[-10:]
+                if m.get("text")
             ],
             {"role": "user", "content": user},
         ]
-        reply = complete_chat(messages)
-        history.append({"role": "assistant", "text": reply})
+        reply, thinking = complete_chat(messages)
+        append_chat(recording_id, {"role": "assistant", "text": reply, "thinking": thinking})
         return self.card()
 
     def deepen(self, recording_id: str) -> dict[str, Any]:
@@ -769,6 +840,13 @@ class TrainSession:
         body_parts = [p for p in (info.get("body"), info.get("transcript")) if p]
         if note:
             body_parts.append(f"Trainer note: {note}")
+        chat_lines = [
+            f"{m.get('role')}: {m.get('text')}"
+            for m in load_chat(recording_id)
+            if m.get("text")
+        ]
+        if chat_lines:
+            body_parts.append("Trainer chat:\n" + "\n".join(chat_lines[-12:]))
         snapshot_filings(
             [
                 {
@@ -832,7 +910,7 @@ class TrainHandler(BaseHTTPRequestHandler):
         if path == "/api/chat":
             qs = parse_qs(urlparse(self.path).query)
             rid = (qs.get("recording_id") or [None])[0]
-            hist = _session()._chats.get(str(rid), []) if rid else []
+            hist = load_chat(str(rid)) if rid else []
             self._json(200, {"chat": hist})
             return
         self._send(404, b"not found", "text/plain")

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from plaud_plus_mcp.train import folder_buttons, recording_view, PAGE
+from plaud_plus_mcp.train import PAGE, append_chat, folder_buttons, load_chat, recording_view
 
 
 def test_folder_buttons_hide_probe() -> None:
@@ -45,3 +45,15 @@ def test_page_has_yes_and_skip_keys() -> None:
     assert "TEXTAREA" in PAGE
     assert "/api/chat" in PAGE
     assert "DeepSeek" in PAGE
+    assert "thinking" in PAGE
+
+
+def test_chat_persists_to_disk(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("PLAUD_PLUS_LEARN", str(tmp_path / "learn.jsonl"))
+    append_chat("rec-1", {"role": "user", "text": "which folder?"})
+    append_chat("rec-1", {"role": "assistant", "text": "Personal", "thinking": "late night family"})
+    rows = load_chat("rec-1")
+    assert len(rows) == 2
+    assert rows[1]["text"] == "Personal"
+    assert rows[1]["thinking"] == "late night family"
+    assert (tmp_path / "chats" / "rec-1.jsonl").is_file()

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.4 — 2026-09-04
+
+- Train chat is a durable JSONL per recording (`PlaudPlus/chats/<id>.jsonl`).
+- The UI shows DeepSeek thinking as well as the reply.
+
 ## 0.5.3 — 2026-09-04
 
 - Train UI: DeepSeek chat on each card (OpenRouter v4-flash or DEEPSEEK_API_KEY).
